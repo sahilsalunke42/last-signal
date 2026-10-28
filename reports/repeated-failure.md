@@ -1,0 +1,119 @@
+# LAST SIGNAL // Forensic Investigation Report
+
+> *Digital autopsy and failure pattern analysis for recorded AI-agent executions.*
+
+## Case Overview
+
+| Metric | Value |
+| :--- | :--- |
+| **Trace File** | `examples/repeated_tool_failure.jsonl` |
+| **Trace ID** | `tr-ghost-8812` |
+| **Lines Ingested** | 11 |
+| **Valid Events** | 11 |
+| **Malformed Lines** | 0 |
+| **Execution Outcome** | **FAILED (Confirmed by agent_end: failed - Exceeded maximum retry limit (3) without successful connection)** |
+| **Findings Detected** | 4 (2 critical, 2 high) |
+
+## Executive Summary
+
+Detected 4 failure pattern(s) across 11 events: 2 critical, 2 high severity. Session status: 'failed'.
+
+## Detected Failure Patterns
+
+### CRITICAL Severity (2)
+
+#### 1. Repeated Failure in Tool 'run_migration'
+
+- **Rule ID:** `RULE-REPEATED-TOOL-FAILURE`
+- **Severity:** `CRITICAL`
+- **Evidence Basis:** `Explicit Error`
+- **Relevant Trace Line(s):** 4, 7, 10
+
+**Explanation:**
+Tool 'run_migration' failed 3 times during execution. Persistent failure indicates an unhandled error condition, environmental misconfiguration, or invalid input parameters.
+
+**Supporting Evidence:**
+- Tool 'run_migration' recorded 3 failure events on line(s): [4, 7, 10].
+- Line 4 (attempt 1): OperationalError: connection to server at '127.0.0.1', port 5432 failed: Connection refused
+- Line 7 (attempt 2): OperationalError: connection to server at '127.0.0.1', port 5432 failed: Connection refused
+- Line 10 (attempt 3): OperationalError: connection to server at '127.0.0.1', port 5432 failed: Connection refused
+
+**Recommended Action:**
+> Check external service dependencies, environment credentials, and arguments passed to 'run_migration'. Consider adding a fallback alternative tool if this service is unstable.
+
+#### 2. Terminal Tool Failure in 'run_migration' Preceding Agent Abort
+
+- **Rule ID:** `RULE-TERMINAL-TOOL-FAILURE`
+- **Severity:** `CRITICAL`
+- **Evidence Basis:** `Inferred Pattern`
+- **Relevant Trace Line(s):** 10, 11
+
+**Explanation:**
+Tool 'run_migration' failed immediately before the agent terminated unsuccessfully. The failure of this tool is the proximate event preceding session failure.
+
+**Supporting Evidence:**
+- Line 10: Tool 'run_migration' failed with error: OperationalError: connection to server at '127.0.0.1', port 5432 failed: Connection refused
+- Line 11: Agent terminated with status 'failed' error: Exceeded maximum retry limit (3) without successful connection
+
+**Recommended Action:**
+> Wrap calls to 'run_migration' in comprehensive exception handling or fallback logic. Ensure the agent can handle tool failures gracefully without crashing the overall session.
+
+### HIGH Severity (2)
+
+#### 3. Unproductive Retry Loop for 'run_migration'
+
+- **Rule ID:** `RULE-UNPRODUCTIVE-RETRY-LOOP`
+- **Severity:** `HIGH`
+- **Evidence Basis:** `Inferred Pattern`
+- **Relevant Trace Line(s):** 4, 5, 7, 8, 10
+
+**Explanation:**
+Operation 'run_migration' entered a retry cycle but never recovered. All recorded retry attempts continued to fail without an intervening success.
+
+**Supporting Evidence:**
+- Operation 'run_migration' made 3 recorded attempt(s) without subsequent success.
+- Line 5: retry attempt=2 status=pending
+- Line 8: retry attempt=3 status=pending
+- Line 4: failed attempt=1 error=OperationalError: connection to server at '127.0.0.1', port 5432 failed: Connection refused
+- Line 7: failed attempt=2 error=OperationalError: connection to server at '127.0.0.1', port 5432 failed: Connection refused
+- Line 10: failed attempt=3 error=OperationalError: connection to server at '127.0.0.1', port 5432 failed: Connection refused
+
+**Recommended Action:**
+> Implement exponential backoff, circuit breaking, or classify 'run_migration' errors as non-retryable to avoid exhausting execution budget on permanent failures.
+
+#### 4. Unrecovered Execution Failure
+
+- **Rule ID:** `RULE-UNRECOVERED-EXECUTION-FAILURE`
+- **Severity:** `HIGH`
+- **Evidence Basis:** `Explicit Error`
+- **Relevant Trace Line(s):** 4, 7, 10, 11
+
+**Explanation:**
+The execution encountered errors and terminated without any subsequent successful recovery operations. The agent failed to self-correct or transition to an alternate execution path.
+
+**Supporting Evidence:**
+- Session ended in status 'failed'.
+- Encountered 4 error event(s) across line(s): [4, 7, 10, 11].
+- No successful tool or model operation was recorded following the error on Line 11.
+
+**Recommended Action:**
+> Implement global self-correction prompts, retry budgets, or secondary fallback tools so the agent does not terminate ungracefully upon encountering unhandled tool errors.
+
+## Key Event Timeline
+
+| Line | Event Type | Operation / Tool | Status | Error Snippet |
+| :---: | :--- | :--- | :--- | :--- |
+| 1 | `agent_start` | `-` | started | - |
+| 2 | `model_call` | `reasoning_planner` | success | - |
+| 3 | `tool_call` | `run_migration` | started | - |
+| 4 | `tool_result` | `run_migration` | failed | OperationalError: connection to server at '127.0.0.1', port ... |
+| 5 | `retry` | `run_migration` | pending | - |
+| 6 | `tool_call` | `run_migration` | started | - |
+| 7 | `tool_result` | `run_migration` | failed | OperationalError: connection to server at '127.0.0.1', port ... |
+| 8 | `retry` | `run_migration` | pending | - |
+| 9 | `tool_call` | `run_migration` | started | - |
+| 10 | `tool_result` | `run_migration` | failed | OperationalError: connection to server at '127.0.0.1', port ... |
+| 11 | `agent_end` | `-` | failed | Exceeded maximum retry limit (3) without successful connecti... |
+
+---
+*Report generated by [Last Signal](https://github.com/sahilsaunke/last-signal) — Ghost in the Machine.*

@@ -116,3 +116,95 @@ class TraceReadResult:
     @property
     def is_valid(self) -> bool:
         return self.error_count == 0 and self.valid_count > 0
+
+
+class Severity(str, Enum):
+    """Severity levels for failure findings."""
+    CRITICAL = "CRITICAL"
+    HIGH = "HIGH"
+    MEDIUM = "MEDIUM"
+    LOW = "LOW"
+    INFO = "INFO"
+
+
+@dataclass
+class Finding:
+    """A deterministic observation or inferred pattern from trace analysis.
+
+    Attributes:
+        id: Unique rule identifier (e.g., RULE-REPEATED-TOOL-FAILURE).
+        title: Short descriptive heading.
+        severity: Severity level justified by trace evidence.
+        explanation: Clear narrative explanation of the failure.
+        line_numbers: Relevant trace line numbers.
+        evidence: Concrete evidence strings (errors, attempts, statuses).
+        recommendation: Practical, actionable debugging guidance.
+        inferred: True if inferred from temporal/sequence correlation,
+                  False if backed by explicit logged errors.
+        metadata: Additional diagnostic context.
+    """
+    id: str
+    title: str
+    severity: Severity
+    explanation: str
+    line_numbers: List[int]
+    evidence: List[str]
+    recommendation: str
+    inferred: bool = False
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert finding to dictionary representation."""
+        return {
+            "id": self.id,
+            "title": self.title,
+            "severity": self.severity.value,
+            "explanation": self.explanation,
+            "line_numbers": self.line_numbers,
+            "evidence": self.evidence,
+            "recommendation": self.recommendation,
+            "inferred": self.inferred,
+            "metadata": self.metadata,
+        }
+
+
+@dataclass
+class AnalysisReport:
+    """Overall report summarizing deterministic failure detection findings."""
+    trace_id: Optional[str] = None
+    total_events: int = 0
+    findings: List[Finding] = field(default_factory=list)
+    has_failures: bool = False
+    agent_status: Optional[str] = None
+    summary: str = ""
+
+    @property
+    def finding_count(self) -> int:
+        return len(self.findings)
+
+    @property
+    def critical_count(self) -> int:
+        return sum(1 for f in self.findings if f.severity == Severity.CRITICAL)
+
+    @property
+    def high_count(self) -> int:
+        return sum(1 for f in self.findings if f.severity == Severity.HIGH)
+
+    @property
+    def has_critical(self) -> bool:
+        return self.critical_count > 0
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert report to dictionary representation."""
+        return {
+            "trace_id": self.trace_id,
+            "total_events": self.total_events,
+            "has_failures": self.has_failures,
+            "agent_status": self.agent_status,
+            "summary": self.summary,
+            "finding_count": self.finding_count,
+            "critical_count": self.critical_count,
+            "high_count": self.high_count,
+            "findings": [f.to_dict() for f in self.findings],
+        }
+
