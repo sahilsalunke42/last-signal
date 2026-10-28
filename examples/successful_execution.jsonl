@@ -1,0 +1,6 @@
+{"timestamp": "2026-10-29T00:05:00Z", "trace_id": "tr-ghost-1001", "event_type": "agent_start", "status": "started", "metadata": {"goal": "Lint and format python files"}}
+{"timestamp": "2026-10-29T00:05:01Z", "trace_id": "tr-ghost-1001", "event_type": "tool_call", "operation": "read_file", "attempt": 1, "status": "started", "metadata": {"path": "src/main.py"}}
+{"timestamp": "2026-10-29T00:05:02Z", "trace_id": "tr-ghost-1001", "event_type": "tool_result", "operation": "read_file", "attempt": 1, "status": "success", "metadata": {"bytes_read": 1420}}
+{"timestamp": "2026-10-29T00:05:03Z", "trace_id": "tr-ghost-1001", "event_type": "tool_call", "operation": "run_linter", "attempt": 1, "status": "started", "metadata": {"target": "src/main.py"}}
+{"timestamp": "2026-10-29T00:05:04Z", "trace_id": "tr-ghost-1001", "event_type": "tool_result", "operation": "run_linter", "attempt": 1, "status": "success", "metadata": {"violations": 0}}
+{"timestamp": "2026-10-29T00:05:05Z", "trace_id": "tr-ghost-1001", "event_type": "agent_end", "status": "success", "metadata": {"summary": "All checks passed without issues"}}

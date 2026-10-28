@@ -1,0 +1,118 @@
+"""Data models and schema definitions for Last Signal trace events."""
+
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any, Dict, List, Optional
+
+
+class EventType(str, Enum):
+    """Standard lifecycle and execution event types."""
+    AGENT_START = "agent_start"
+    MODEL_CALL = "model_call"
+    TOOL_CALL = "tool_call"
+    TOOL_RESULT = "tool_result"
+    RETRY = "retry"
+    AGENT_END = "agent_end"
+
+
+STANDARD_EVENT_TYPES = {e.value for e in EventType}
+
+
+class TraceError(Exception):
+    """Base exception for trace parsing and validation errors."""
+    pass
+
+
+class TraceFileNotFoundError(TraceError):
+    """Raised when the requested trace file does not exist."""
+    pass
+
+
+class TraceParseError(TraceError):
+    """Raised when a trace line cannot be parsed or fails schema validation."""
+
+    def __init__(self, line_number: int, reason: str, line_text: Optional[str] = None):
+        self.line_number = line_number
+        self.reason = reason
+        self.line_text = line_text
+        preview = f" (content: {line_text.strip()!r})" if line_text else ""
+        super().__init__(f"Line {line_number}: {reason}{preview}")
+
+
+@dataclass
+class TraceEvent:
+    """Represents a single verified trace event from a JSONL log.
+
+    Attributes:
+        line_number: 1-based line number in the source file.
+        event_type: Identifier of the event (e.g., tool_call, agent_end).
+        timestamp: Optional ISO 8601 timestamp string.
+        trace_id: Optional correlation ID for the execution session.
+        operation: Name of tool, model, or step executed (aliased to tool).
+        status: Outcome status (e.g., success, failed, error, started).
+        error_message: Descriptive error text if an error occurred.
+        attempt: Attempt sequence count (1-based integer).
+        metadata: Extra arbitrary fields provided in the event.
+        raw: Full unprocessed dictionary as read from the source.
+    """
+    line_number: int
+    event_type: str
+    timestamp: Optional[str] = None
+    trace_id: Optional[str] = None
+    operation: Optional[str] = None
+    status: Optional[str] = None
+    error_message: Optional[str] = None
+    attempt: Optional[int] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    raw: Dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def tool(self) -> Optional[str]:
+        """Convenience alias for operation."""
+        return self.operation
+
+    @property
+    def error(self) -> Optional[str]:
+        """Convenience alias for error_message."""
+        return self.error_message
+
+    @property
+    def is_failure(self) -> bool:
+        """Indicates whether this event represents a failure or error."""
+        if self.status and self.status.lower() in {"failed", "error", "fatal", "timed_out"}:
+            return True
+        return bool(self.error_message)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Return a clean dictionary representation of this event."""
+        return {
+            "line_number": self.line_number,
+            "event_type": self.event_type,
+            "timestamp": self.timestamp,
+            "trace_id": self.trace_id,
+            "operation": self.operation,
+            "status": self.status,
+            "error_message": self.error_message,
+            "attempt": self.attempt,
+            "metadata": self.metadata,
+        }
+
+
+@dataclass
+class TraceReadResult:
+    """Result container for reading a JSONL trace file."""
+    events: List[TraceEvent] = field(default_factory=list)
+    errors: List[TraceParseError] = field(default_factory=list)
+    total_lines: int = 0
+
+    @property
+    def valid_count(self) -> int:
+        return len(self.events)
+
+    @property
+    def error_count(self) -> int:
+        return len(self.errors)
+
+    @property
+    def is_valid(self) -> bool:
+        return self.error_count == 0 and self.valid_count > 0

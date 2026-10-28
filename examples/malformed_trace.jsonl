@@ -1,0 +1,3 @@
+{"timestamp": "2026-10-29T00:20:00Z", "trace_id": "tr-ghost-5000", "event_type": "agent_start", "status": "started"}
+{"timestamp": "2026-10-29T00:20:01Z", "trace_id": "tr-ghost-5000", "event_type": "tool_call", "operation": "read_data", "unclosed_json": true
+{"timestamp": "2026-10-29T00:20:02Z", "trace_id": "tr-ghost-5000", "event_type": "agent_end", "status": "failed"}
