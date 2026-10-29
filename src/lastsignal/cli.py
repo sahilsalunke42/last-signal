@@ -32,6 +32,15 @@ from lastsignal.runner import (
 )
 from lastsignal.trace_reader import TraceError, read_trace
 
+# Last Signal Día de los Muertos / Forensic Theme Tokens (Design.md)
+COLOR_BONE = "#E8E0D2"
+COLOR_ASH = "#9297A1"
+COLOR_MARIGOLD = "#E8A23A"
+COLOR_CRIMSON = "#D64B55"
+COLOR_SPECTRAL_TEAL = "#65B8A5"
+COLOR_VIOLET = "#A78BFA"
+COLOR_BORDER = "#343A44"
+
 app = typer.Typer(
     name="lastsignal",
     help="Last Signal: Forensic investigation CLI for failed AI-agent executions.",
@@ -58,14 +67,31 @@ def build_startup_interface(width: Optional[int] = None) -> str:
     offline explanation, and copyable examples, adapting safely to terminal width.
     """
     w = width or get_terminal_width()
-    sep = "=" * w
-    sub_sep = "-" * w
+    inner_w = max(46, w - 4)
+    box_w = inner_w + 4
+
+    top_border = "┌" + "─" * (box_w - 2) + "┐"
+    mid_border = "├" + "─" * (box_w - 2) + "┤"
+    bot_border = "└" + "─" * (box_w - 2) + "┘"
+    div_line = "─" * box_w
+    sub_sep = "─" * box_w
+
+    def box_row(text: str = "") -> str:
+        truncated = text[:inner_w]
+        return f"│ {truncated.ljust(inner_w)} │"
 
     lines = [
-        sep,
-        f"LAST SIGNAL // FORENSIC INVESTIGATION CLI (v{__version__})",
-        '"Ghost in the Machine" — Offline-First Digital Autopsy for AI Agents',
-        sep,
+        top_border,
+        box_row(""),
+        box_row(f"  LAST SIGNAL // FORENSIC INVESTIGATION CLI (v{__version__})"),
+        box_row('  "Ghost in the Machine" — Digital Afterlife Forensics'),
+        box_row(""),
+        box_row("  Every failed agent leaves a trace."),
+        box_row(""),
+        mid_border,
+        box_row("  MODE       LOCAL / OFFLINE (100% Zero-Cloud Telemetry)"),
+        box_row("  ANALYSIS   DETERMINISTIC RULES + OPTIONAL LOCAL AI (OLLAMA)"),
+        bot_border,
         "",
         "Last Signal investigates failed AI-agent executions. It reconstructs recorded",
         "traces, detects failure patterns (repeated tool errors, unproductive retry",
@@ -120,7 +146,7 @@ def build_startup_interface(width: Optional[int] = None) -> str:
         "  2. Run sample analysis:    lastsignal analyze examples/repeated_tool_failure.jsonl",
         "  3. Force offline analysis: lastsignal analyze examples/repeated_tool_failure.jsonl --no-ai",
         "  4. Export Markdown report: lastsignal report examples/repeated_tool_failure.jsonl -o reports/autopsy.md",
-        sep,
+        div_line,
     ]
     return "\n".join(lines)
 
@@ -222,12 +248,12 @@ def run_command(
 
     # 1. Successful execution
     if exit_code == 0:
-        console.print(f"\n[bold green][+] Process completed successfully (exit code 0).[/bold green]")
-        console.print(f"[*] Execution trace saved to: {trace_path}")
+        console.print(f"\n[bold {COLOR_SPECTRAL_TEAL}][+] Process completed successfully (exit code 0).[/bold {COLOR_SPECTRAL_TEAL}]")
+        console.print(f"[bold {COLOR_ASH}][*] Execution trace saved to:[/bold {COLOR_ASH}] [{COLOR_BONE}]{trace_path}[/{COLOR_BONE}]")
         raise typer.Exit(code=0)
 
     # 2. Failed execution: automatically trigger forensic investigation
-    console.print(f"\n[bold red][!] Process failed with exit code {exit_code}. Launching forensic autopsy...[/bold red]\n")
+    console.print(f"\n[bold {COLOR_CRIMSON}][!] Process failed with exit code {exit_code}. Launching forensic autopsy...[/bold {COLOR_CRIMSON}]\n")
 
     read_res = read_trace(trace_path)
     analysis = detect_failures(read_res.events)
@@ -251,11 +277,11 @@ def run_command(
     if output:
         try:
             saved_path = export_markdown_report(read_res, analysis, str(trace_path), output)
-            console.print(f"\n[bold green][+] Markdown report exported to:[/bold green] {saved_path}")
+            console.print(f"\n[bold {COLOR_SPECTRAL_TEAL}][+] Markdown report exported to:[/bold {COLOR_SPECTRAL_TEAL}] [{COLOR_BONE}]{saved_path}[/{COLOR_BONE}]")
         except ReportExportError as exc:
-            err_console.print(f"\n[bold red][!] Report export failed:[/bold red] {exc}")
+            err_console.print(f"\n[bold {COLOR_CRIMSON}][!] Report export failed:[/bold {COLOR_CRIMSON}] {exc}")
 
-    console.print(f"\n[bold green][+] Execution trace saved to:[/bold green] {trace_path}")
+    console.print(f"\n[bold {COLOR_SPECTRAL_TEAL}][+] Execution trace saved to:[/bold {COLOR_SPECTRAL_TEAL}] [{COLOR_BONE}]{trace_path}[/{COLOR_BONE}]")
 
     # Preserve child process exit code
     raise typer.Exit(code=exit_code)
@@ -330,9 +356,9 @@ def analyze(
     if output:
         try:
             saved_path = export_markdown_report(read_res, analysis, str(trace_path), output)
-            console.print(f"\n[bold green][+] Markdown report exported to:[/bold green] {saved_path}")
+            console.print(f"\n[bold {COLOR_SPECTRAL_TEAL}][+] Markdown report exported to:[/bold {COLOR_SPECTRAL_TEAL}] [{COLOR_BONE}]{saved_path}[/{COLOR_BONE}]")
         except ReportExportError as exc:
-            err_console.print(f"\n[bold red][!] Export failed:[/bold red] {exc}")
+            err_console.print(f"\n[bold {COLOR_CRIMSON}][!] Export failed:[/bold {COLOR_CRIMSON}] {exc}")
             raise typer.Exit(code=1)
 
     # Return exit code 1 if failures or errors detected
@@ -377,7 +403,7 @@ def report(
     try:
         read_res = read_trace(trace_path)
     except TraceError as exc:
-        err_console.print(f"[bold red]Error reading trace:[/bold red] {exc}")
+        err_console.print(f"[bold {COLOR_CRIMSON}]Error reading trace:[/bold {COLOR_CRIMSON}] {exc}")
         raise typer.Exit(code=1)
 
     analysis = detect_failures(read_res.events)
@@ -394,9 +420,9 @@ def report(
 
     try:
         saved_path = export_markdown_report(read_res, analysis, str(trace_path), output)
-        console.print(f"[bold green][+] Forensic Markdown report written to:[/bold green] {saved_path}")
+        console.print(f"[bold {COLOR_SPECTRAL_TEAL}][+] Forensic Markdown report written to:[/bold {COLOR_SPECTRAL_TEAL}] [{COLOR_BONE}]{saved_path}[/{COLOR_BONE}]")
     except ReportExportError as exc:
-        err_console.print(f"[bold red][!] Report export failed:[/bold red] {exc}")
+        err_console.print(f"[bold {COLOR_CRIMSON}][!] Report export failed:[/bold {COLOR_CRIMSON}] {exc}")
         raise typer.Exit(code=1)
 
     if analysis.has_failures or read_res.error_count > 0:
@@ -418,13 +444,13 @@ def doctor(
     ),
 ):
     """Verify local environment, report generation, and Ollama connectivity."""
-    console.print("[bold cyan]=== LAST SIGNAL SYSTEM DIAGNOSTICS ===[/bold cyan]\n")
+    console.print(f"[bold {COLOR_MARIGOLD}]=== LAST SIGNAL SYSTEM DIAGNOSTICS ===[/bold {COLOR_MARIGOLD}]\n")
 
     # 1. Environment & Core
     console.print(f"[*] Last Signal Version: {__version__}")
     console.print(f"[*] Python Version:      {sys.version.split()[0]}")
     console.print(f"[*] Python Executable:   {sys.executable}")
-    console.print("[bold green][+] Core Engine:[/bold green]         READY (Trace reader & deterministic detector)")
+    console.print(f"[bold {COLOR_SPECTRAL_TEAL}][+] Core Engine:[/bold {COLOR_SPECTRAL_TEAL}]         READY [dim](Trace reader & deterministic detector)[/dim]")
 
     # 2. Markdown Export Check
     can_export = False
@@ -439,112 +465,112 @@ def doctor(
             export_markdown_report(sample_read, sample_analysis, "test.jsonl", tmp_target)
             if tmp_target.exists():
                 can_export = True
-    except Exception as exc:
+    except Exception:
         can_export = False
 
     if can_export:
-        console.print("[bold green][+] Report Exporter:     READY (File system write & directory creation verified)[/bold green]")
+        console.print(f"[bold {COLOR_SPECTRAL_TEAL}][+] Report Exporter:[/bold {COLOR_SPECTRAL_TEAL}]     READY [dim](File system write & directory creation verified)[/dim]")
     else:
-        console.print("[bold red][-] Report Exporter:     FAILED (File system write issue)[/bold red]")
+        console.print(f"[bold {COLOR_CRIMSON}][-] Report Exporter:[/bold {COLOR_CRIMSON}]     FAILED [dim](File system write issue)[/dim]")
 
     # 3. Local Ollama Connectivity & Model Check
     client = OllamaClient(base_url=ollama_url, model=model, connect_timeout=2.0)
     connected, version_or_err = client.check_connectivity()
 
     if connected:
-        console.print(f"[bold green][+] Local Ollama:        ONLINE (Daemon v{version_or_err} at {client.base_url})[/bold green]")
+        console.print(f"[bold {COLOR_SPECTRAL_TEAL}][+] Local Ollama:[/bold {COLOR_SPECTRAL_TEAL}]        ONLINE [dim](Daemon v{version_or_err} at {client.base_url})[/dim]")
         models = client.list_models()
         if models:
             console.print(f"[*] Installed Models:   {', '.join(models)}")
         else:
-            console.print("[!] Installed Models:   None found in local library")
+            console.print(f"[bold {COLOR_MARIGOLD}][!] Installed Models:  [/bold {COLOR_MARIGOLD}] None found in local library")
 
         available, _ = client.is_model_available(model)
         if available:
-            console.print(f"[bold green][+] Target Model:        READY ('{model}' available for local inference)[/bold green]")
+            console.print(f"[bold {COLOR_SPECTRAL_TEAL}][+] Target Model:       [/bold {COLOR_SPECTRAL_TEAL}] READY [dim]('{model}' available for local inference)[/dim]")
         else:
-            console.print(f"[bold yellow][-] Target Model:        NOT FOUND ('{model}' not installed; run 'ollama pull {model}')[/bold yellow]")
+            console.print(f"[bold {COLOR_MARIGOLD}[-] Target Model:       [/bold {COLOR_MARIGOLD}] NOT FOUND [dim]('{model}' not installed; run 'ollama pull {model}')[/dim]")
     else:
-        console.print(f"[bold yellow][-] Local Ollama:        OFFLINE ({version_or_err})[/bold yellow]")
+        console.print(f"[bold {COLOR_MARIGOLD}][-] Local Ollama:        OFFLINE ({version_or_err})[/bold {COLOR_MARIGOLD}]")
         console.print("    [dim]Deterministic analysis and report export remain 100% operational offline.[/dim]")
-        console.print(f"    [dim]To enable local AI assistance: install Ollama and run 'ollama serve'.[/dim]")
+        console.print("    [dim]To enable local AI assistance: install Ollama and run 'ollama serve'.[/dim]")
 
-    console.print("\n[bold green]Environment check completed.[/bold green]")
+    console.print(f"\n[bold {COLOR_SPECTRAL_TEAL}]Environment check completed.[/bold {COLOR_SPECTRAL_TEAL}]")
 
 
 @app.command(name="help")
 def show_help(
     command_name: Optional[str] = typer.Argument(
         None,
-        help="Specific command to get detailed help for (analyze, report, doctor).",
+        help="Specific command to get detailed help for (run, analyze, report, doctor).",
     )
 ):
     """Show available commands and their usage."""
     if command_name:
         cmd = command_name.lower().strip()
         if cmd == "run":
-            console.print("[bold cyan]COMMAND: lastsignal run[/bold cyan]\n")
+            console.print(f"[bold {COLOR_MARIGOLD}]COMMAND: lastsignal run[/bold {COLOR_MARIGOLD}]\n")
             console.print("Execute an agent command, capture execution trace, and auto-diagnose on failure.\n")
-            console.print("[bold]Usage:[/bold]")
+            console.print(f"[bold {COLOR_BONE}]Usage:[/bold {COLOR_BONE}]")
             console.print("  lastsignal run [OPTIONS] -- <COMMAND> [ARGS...]\n")
-            console.print("[bold]Options:[/bold]")
+            console.print(f"[bold {COLOR_BONE}]Options:[/bold {COLOR_BONE}]")
             console.print("  --trace-out, -t <PATH> Destination path for saved JSONL trace")
             console.print("  --output, -o <PATH>    Destination path for Markdown autopsy report if process fails")
             console.print("  --no-ai                Skip local LLM calls; run 100% offline deterministic rules")
             console.print("  --model, -m <NAME>     Local Ollama model name (default: llama3.2:latest)")
             console.print("  --ollama-url <URL>     Ollama endpoint (default: http://localhost:11434)")
             console.print("  --no-color             Disable terminal ANSI color formatting\n")
-            console.print("[bold]Examples:[/bold]")
+            console.print(f"[bold {COLOR_BONE}]Examples:[/bold {COLOR_BONE}]")
             console.print("  lastsignal run -- python examples/demo_agent.py")
             console.print("  lastsignal run --no-ai -- python examples/demo_agent.py")
             console.print("  lastsignal run -t traces/custom.jsonl -o reports/fail.md -- node agent.js")
             return
 
         elif cmd == "analyze":
-            console.print("[bold cyan]COMMAND: lastsignal analyze[/bold cyan]\n")
+            console.print(f"[bold {COLOR_MARIGOLD}]COMMAND: lastsignal analyze[/bold {COLOR_MARIGOLD}]\n")
             console.print("Ingest a JSONL trace, detect failure patterns, and output forensic autopsy.\n")
-            console.print("[bold]Usage:[/bold]")
+            console.print(f"[bold {COLOR_BONE}]Usage:[/bold {COLOR_BONE}]")
             console.print("  lastsignal analyze <TRACE_FILE> [OPTIONS]\n")
-            console.print("[bold]Options:[/bold]")
+            console.print(f"[bold {COLOR_BONE}]Options:[/bold {COLOR_BONE}]")
             console.print("  --output, -o <PATH>   Export forensic report to Markdown file")
             console.print("  --no-ai               Skip local LLM calls; run 100% offline deterministic rules")
             console.print("  --model, -m <NAME>    Local Ollama model name (default: llama3.2:latest)")
             console.print("  --ollama-url <URL>    Ollama endpoint (default: http://localhost:11434)")
             console.print("  --no-color            Disable terminal ANSI color formatting\n")
-            console.print("[bold]Examples:[/bold]")
+            console.print(f"[bold {COLOR_BONE}]Examples:[/bold {COLOR_BONE}]")
             console.print("  lastsignal analyze examples/repeated_tool_failure.jsonl")
             console.print("  lastsignal analyze examples/repeated_tool_failure.jsonl --no-ai")
             console.print("  lastsignal analyze examples/repeated_tool_failure.jsonl -o reports/autopsy.md")
             return
 
         elif cmd == "report":
-            console.print("[bold cyan]COMMAND: lastsignal report[/bold cyan]\n")
+            console.print(f"[bold {COLOR_MARIGOLD}]COMMAND: lastsignal report[/bold {COLOR_MARIGOLD}]\n")
             console.print("Generate and export a Markdown investigation report for a trace file.\n")
-            console.print("[bold]Usage:[/bold]")
+            console.print(f"[bold {COLOR_BONE}]Usage:[/bold {COLOR_BONE}]")
             console.print("  lastsignal report <TRACE_FILE> --output <PATH> [OPTIONS]\n")
-            console.print("[bold]Options:[/bold]")
+            console.print(f"[bold {COLOR_BONE}]Options:[/bold {COLOR_BONE}]")
             console.print("  --output, -o <PATH>   (Required) Destination path for Markdown report")
             console.print("  --no-ai               Skip local LLM calls in the exported report")
             console.print("  --model, -m <NAME>    Local Ollama model name (default: llama3.2:latest)")
             console.print("  --ollama-url <URL>    Ollama endpoint (default: http://localhost:11434)\n")
-            console.print("[bold]Example:[/bold]")
+            console.print(f"[bold {COLOR_BONE}]Example:[/bold {COLOR_BONE}]")
             console.print("  lastsignal report examples/repeated_tool_failure.jsonl -o reports/autopsy.md")
             return
 
         elif cmd == "doctor":
-            console.print("[bold cyan]COMMAND: lastsignal doctor[/bold cyan]\n")
+            console.print(f"[bold {COLOR_MARIGOLD}]COMMAND: lastsignal doctor[/bold {COLOR_MARIGOLD}]\n")
             console.print("Verify local environment, report generation, and Ollama connectivity.\n")
-            console.print("[bold]Usage:[/bold]")
+            console.print(f"[bold {COLOR_BONE}]Usage:[/bold {COLOR_BONE}]")
             console.print("  lastsignal doctor [OPTIONS]\n")
-            console.print("[bold]Options:[/bold]")
+            console.print(f"[bold {COLOR_BONE}]Options:[/bold {COLOR_BONE}]")
             console.print("  --ollama-url <URL>    Ollama endpoint to test (default: http://localhost:11434)")
             console.print("  --model, -m <NAME>    Target model name to verify (default: llama3.2:latest)\n")
-            console.print("[bold]Example:[/bold]")
+            console.print(f"[bold {COLOR_BONE}]Example:[/bold {COLOR_BONE}]")
             console.print("  lastsignal doctor")
             return
 
         else:
-            console.print(f"[bold yellow]Unknown command '{command_name}'.[/bold yellow] Available commands: run, analyze, report, doctor, help\n")
+            console.print(f"[bold {COLOR_MARIGOLD}]Unknown command '{command_name}'.[/bold {COLOR_MARIGOLD}] Available commands: run, analyze, report, doctor, help\n")
 
     # General overview
     w = get_terminal_width()

@@ -24,8 +24,14 @@ venv/
 Build.md
 Submission.md
 reports/*.md
+.agent/
 .agents/
 .lastsignal/
 .claude/
 .codex/
 .ipynb_checkpoints/
+.impeccable/
+.anitigravity/
+.gemini/
+Design.md
+PRODUCT.md
