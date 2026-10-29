@@ -23,6 +23,7 @@ venv/
 .venv/
 Build.md
 Submission.md
+reports/*.md
 .agents/
 .claude/
 .codex/
