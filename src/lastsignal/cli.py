@@ -1,9 +1,10 @@
 """Command-line interface for Last Signal using Typer and Rich."""
 
+import os
 import sys
 import tempfile
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 import typer
 from rich.console import Console
 from rich.table import Table
@@ -21,6 +22,13 @@ from lastsignal.report import (
     ReportExportError,
     export_markdown_report,
     format_terminal_report,
+)
+from lastsignal.runner import (
+    CommandExecutionError,
+    CommandNotFoundError,
+    RunnerError,
+    TraceWriteError,
+    run_and_capture,
 )
 from lastsignal.trace_reader import TraceError, read_trace
 
@@ -66,6 +74,11 @@ def build_startup_interface(width: Optional[int] = None) -> str:
         "",
         "REGISTERED COMMANDS:",
         sub_sep,
+        "  run",
+        "    Syntax:      lastsignal run [OPTIONS] -- <COMMAND> [ARGS...]",
+        "    Description: Execute a command, capture trace, and auto-diagnose on failure.",
+        "    Example:     lastsignal run -- python examples/demo_agent.py",
+        "",
         "  analyze",
         "    Syntax:      lastsignal analyze <TRACE_FILE> [OPTIONS]",
         "    Description: Ingest trace, detect failure patterns, and display autopsy.",
@@ -140,6 +153,112 @@ def main_callback(
         else:
             console.print(startup_text)
         raise typer.Exit(code=0)
+
+
+@app.command(
+    name="run",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def run_command(
+    ctx: typer.Context,
+    command: Optional[List[str]] = typer.Argument(
+        None,
+        help="Target command and arguments to execute.",
+    ),
+    trace_out: Optional[Path] = typer.Option(
+        None,
+        "--trace-out",
+        "-t",
+        help="Path where captured JSONL trace should be saved.",
+    ),
+    output: Optional[Path] = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Destination path for Markdown autopsy report if process fails.",
+    ),
+    no_ai: bool = typer.Option(
+        False,
+        "--no-ai",
+        help="Skip local LLM calls and perform deterministic analysis only.",
+    ),
+    model: str = typer.Option(
+        DEFAULT_OLLAMA_MODEL,
+        "--model",
+        "-m",
+        help="Local Ollama model name for grounded interpretation.",
+    ),
+    ollama_url: str = typer.Option(
+        DEFAULT_OLLAMA_URL,
+        "--ollama-url",
+        help="Base URL of local Ollama instance.",
+    ),
+    no_color: bool = typer.Option(
+        False,
+        "--no-color",
+        help="Disable ANSI colors and terminal styling.",
+    ),
+):
+    """Execute an agent command, capture its trace, and auto-diagnose on failure."""
+    target_cmd = list(command or []) + ctx.args
+    if not target_cmd:
+        err_console.print("[bold red]Error:[/bold red] No command provided to run.")
+        console.print("Usage:   lastsignal run [OPTIONS] -- <COMMAND> [ARGS...]")
+        console.print("Example: lastsignal run -- python examples/demo_agent.py")
+        raise typer.Exit(code=2)
+
+    try:
+        exit_code, trace_path, _ = run_and_capture(
+            command=target_cmd,
+            trace_output_path=trace_out,
+            stream_output=True,
+        )
+    except CommandNotFoundError as exc:
+        err_console.print(f"\n[bold red]Execution Error:[/bold red] {exc}")
+        raise typer.Exit(code=127)
+    except RunnerError as exc:
+        err_console.print(f"\n[bold red]Execution Error:[/bold red] {exc}")
+        raise typer.Exit(code=1)
+
+    # 1. Successful execution
+    if exit_code == 0:
+        console.print(f"\n[bold green][+] Process completed successfully (exit code 0).[/bold green]")
+        console.print(f"[*] Execution trace saved to: {trace_path}")
+        raise typer.Exit(code=0)
+
+    # 2. Failed execution: automatically trigger forensic investigation
+    console.print(f"\n[bold red][!] Process failed with exit code {exit_code}. Launching forensic autopsy...[/bold red]\n")
+
+    read_res = read_trace(trace_path)
+    analysis = detect_failures(read_res.events)
+
+    # Local AI interpretation (with graceful fallback)
+    ai_diag = diagnose_with_local_ai(
+        report=analysis,
+        events=read_res.events,
+        base_url=ollama_url,
+        model=model,
+        disabled=no_ai,
+    )
+    analysis.ai_diagnosis = ai_diag
+
+    terminal_report = format_terminal_report(read_res, analysis, str(trace_path))
+    if no_color or os.environ.get("NO_COLOR"):
+        typer.echo(terminal_report)
+    else:
+        console.print(terminal_report)
+
+    if output:
+        try:
+            saved_path = export_markdown_report(read_res, analysis, str(trace_path), output)
+            console.print(f"\n[bold green][+] Markdown report exported to:[/bold green] {saved_path}")
+        except ReportExportError as exc:
+            err_console.print(f"\n[bold red][!] Report export failed:[/bold red] {exc}")
+
+    console.print(f"\n[bold green][+] Execution trace saved to:[/bold green] {trace_path}")
+
+    # Preserve child process exit code
+    raise typer.Exit(code=exit_code)
 
 
 @app.command(name="analyze")
@@ -363,7 +482,25 @@ def show_help(
     """Show available commands and their usage."""
     if command_name:
         cmd = command_name.lower().strip()
-        if cmd == "analyze":
+        if cmd == "run":
+            console.print("[bold cyan]COMMAND: lastsignal run[/bold cyan]\n")
+            console.print("Execute an agent command, capture execution trace, and auto-diagnose on failure.\n")
+            console.print("[bold]Usage:[/bold]")
+            console.print("  lastsignal run [OPTIONS] -- <COMMAND> [ARGS...]\n")
+            console.print("[bold]Options:[/bold]")
+            console.print("  --trace-out, -t <PATH> Destination path for saved JSONL trace")
+            console.print("  --output, -o <PATH>    Destination path for Markdown autopsy report if process fails")
+            console.print("  --no-ai                Skip local LLM calls; run 100% offline deterministic rules")
+            console.print("  --model, -m <NAME>     Local Ollama model name (default: llama3.2:latest)")
+            console.print("  --ollama-url <URL>     Ollama endpoint (default: http://localhost:11434)")
+            console.print("  --no-color             Disable terminal ANSI color formatting\n")
+            console.print("[bold]Examples:[/bold]")
+            console.print("  lastsignal run -- python examples/demo_agent.py")
+            console.print("  lastsignal run --no-ai -- python examples/demo_agent.py")
+            console.print("  lastsignal run -t traces/custom.jsonl -o reports/fail.md -- node agent.js")
+            return
+
+        elif cmd == "analyze":
             console.print("[bold cyan]COMMAND: lastsignal analyze[/bold cyan]\n")
             console.print("Ingest a JSONL trace, detect failure patterns, and output forensic autopsy.\n")
             console.print("[bold]Usage:[/bold]")
@@ -407,49 +544,64 @@ def show_help(
             return
 
         else:
-            console.print(f"[bold yellow]Unknown command '{command_name}'.[/bold yellow] Available commands: analyze, report, doctor, help\n")
+            console.print(f"[bold yellow]Unknown command '{command_name}'.[/bold yellow] Available commands: run, analyze, report, doctor, help\n")
 
-    # General overview table
-    console.print("[bold cyan]================================================================================[/bold cyan]")
-    console.print("[bold cyan]LAST SIGNAL // FORENSIC CLI COMMAND REFERENCE[/bold cyan]")
-    console.print("[dim]Offline-first digital autopsy for investigating failed AI-agent executions.[/dim]")
-    console.print("[bold cyan]================================================================================[/bold cyan]\n")
+    # General overview
+    w = get_terminal_width()
+    sep = "=" * w
+    sub_sep = "-" * w
 
-    table = Table(title="Available Commands", border_style="dim", show_header=True)
-    table.add_column("Command", style="bold green", width=12)
-    table.add_column("Purpose", style="white", width=42)
-    table.add_column("Example Usage", style="cyan", width=38)
-
-    table.add_row(
-        "analyze",
-        "Ingest trace, detect failure patterns, and display forensic autopsy.",
-        "lastsignal analyze trace.jsonl",
-    )
-    table.add_row(
-        "report",
-        "Generate and export a Markdown autopsy report to a destination file.",
-        "lastsignal report trace.jsonl -o out.md",
-    )
-    table.add_row(
-        "doctor",
-        "Run system diagnostics (core engine, export capability, local Ollama).",
-        "lastsignal doctor",
-    )
-    table.add_row(
-        "help",
-        "Show available commands and usage guidelines.",
-        "lastsignal help [analyze|report|doctor]",
-    )
-
-    console.print(table)
-    console.print()
-    console.print("[bold]Common Flags & Options:[/bold]")
-    console.print("  [green]--no-ai[/green]               Force 100% offline analysis (skip all local LLM calls)")
-    console.print("  [green]--output, -o[/green] <PATH>   Export forensic autopsy report to a Markdown (.md) file")
-    console.print("  [green]--model, -m[/green] <NAME>    Configure local Ollama model (default: llama3.2:latest)")
-    console.print("  [green]--ollama-url[/green] <URL>   Configure local Ollama endpoint (default: http://localhost:11434)")
-    console.print("  [green]--no-color[/green]             Disable terminal ANSI color formatting")
-    console.print("\n[dim]For detailed help on a specific command, run:[/dim] [cyan]lastsignal help <command>[/cyan]\n")
+    lines = [
+        sep,
+        f"LAST SIGNAL // COMMAND REFERENCE (v{__version__})",
+        '"Ghost in the Machine" — Offline-First Digital Autopsy for AI Agents',
+        sep,
+        "",
+        "REGISTERED COMMANDS:",
+        sub_sep,
+        "  run",
+        "    Syntax:      lastsignal run [OPTIONS] -- <COMMAND> [ARGS...]",
+        "    Description: Execute a command, capture trace, and auto-diagnose on failure.",
+        "    Example:     lastsignal run -- python examples/demo_agent.py",
+        "",
+        "  analyze",
+        "    Syntax:      lastsignal analyze <TRACE_FILE> [OPTIONS]",
+        "    Description: Ingest trace, detect failure patterns, and display autopsy.",
+        "    Example:     lastsignal analyze examples/repeated_tool_failure.jsonl",
+        "",
+        "  report",
+        "    Syntax:      lastsignal report <TRACE_FILE> --output <PATH> [OPTIONS]",
+        "    Description: Generate and export a Markdown autopsy report to destination file.",
+        "    Example:     lastsignal report examples/repeated_tool_failure.jsonl -o reports/autopsy.md",
+        "",
+        "  doctor",
+        "    Syntax:      lastsignal doctor [OPTIONS]",
+        "    Description: Verify local environment, report file write, and Ollama status.",
+        "    Example:     lastsignal doctor",
+        "",
+        "  help",
+        "    Syntax:      lastsignal help [COMMAND]",
+        "    Description: Show available commands and detailed usage reference.",
+        "    Example:     lastsignal help analyze",
+        "",
+        "OFFLINE & DETERMINISTIC ANALYSIS:",
+        sub_sep,
+        "  Last Signal runs 100% offline. To bypass all local LLM calls and enforce",
+        "  purely deterministic rule-based analysis, pass --no-ai:",
+        "    lastsignal analyze <TRACE_FILE> --no-ai",
+        "",
+        "COMMON FLAGS & OPTIONS:",
+        sub_sep,
+        "  --no-ai               Run 100% offline deterministic rules (no LLM calls).",
+        "  --output, -o <PATH>   Export forensic autopsy report to a Markdown (.md) file.",
+        "  --model, -m <NAME>    Configure local Ollama model (default: llama3.2:latest).",
+        "  --ollama-url <URL>    Configure local Ollama daemon endpoint (default: http://localhost:11434).",
+        "  --no-color            Disable terminal ANSI color formatting.",
+        "",
+        "For detailed help on a specific command, run: lastsignal help <command>",
+        sep,
+    ]
+    console.print("\n".join(lines))
 
 
 def main():

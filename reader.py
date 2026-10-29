@@ -74,6 +74,7 @@ Usage:
   lastsignal <COMMAND> [OPTIONS]
 
 Available Commands:
+  run       Execute agent command, capture trace, and auto-diagnose on failure.
   analyze   Ingest trace, detect failure patterns, and display autopsy.
   report    Generate and export a Markdown autopsy report.
   doctor    Run environment and Ollama diagnostics.

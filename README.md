@@ -140,7 +140,25 @@ pip install pytest
 
 ## 7. Quickstart & CLI Commands
 
-### A. View Available Commands (Help)
+### A. Supervise and Auto-Diagnose an Agent (`lastsignal run`)
+
+Developers no longer need to manually construct JSONL trace files. `lastsignal run` executes your agent command securely (without shell invocation), streams standard output and error, writes an automatic execution trace, and—if the agent fails—launches an immediate forensic autopsy.
+
+```bash
+# Supervise execution of an AI agent and auto-diagnose on failure
+lastsignal run -- python examples/demo_agent.py
+
+# Run with clean completion
+lastsignal run -- python examples/demo_agent.py --succeed
+
+# Supervise with 100% offline deterministic rules and export a Markdown autopsy report
+lastsignal run --no-ai --output reports/agent_failure.md -- python examples/demo_agent.py
+
+# Custom trace destination
+lastsignal run -t traces/session.jsonl -- python my_agent.py
+```
+
+### B. View Available Commands (Help)
 ```bash
 # Display command reference table
 lastsignal help
@@ -149,13 +167,13 @@ lastsignal help
 lastsignal help analyze
 ```
 
-### B. Run System Diagnostics
+### C. Run System Diagnostics
 ```bash
 lastsignal doctor
 ```
 Checks Python version, core parsing and detection engine, report file writing, and local Ollama connectivity.
 
-### C. Analyze an Execution Trace
+### D. Analyze an Execution Trace
 ```bash
 # Analyze using local AI (with automatic graceful fallback if Ollama is offline)
 lastsignal analyze examples/repeated_tool_failure.jsonl
@@ -167,12 +185,12 @@ lastsignal analyze examples/repeated_tool_failure.jsonl --no-ai
 lastsignal analyze examples/repeated_tool_failure.jsonl --output reports/autopsy.md
 ```
 
-### D. Direct Markdown Report Export
+### E. Direct Markdown Report Export
 ```bash
 lastsignal report examples/repeated_tool_failure.jsonl --output reports/autopsy.md
 ```
 
-### E. Direct Runner Script
+### F. Direct Runner Script
 You can also run Last Signal directly without installing the CLI binary:
 ```bash
 python3 reader.py help

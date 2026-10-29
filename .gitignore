@@ -25,6 +25,7 @@ Build.md
 Submission.md
 reports/*.md
 .agents/
+.lastsignal/
 .claude/
 .codex/
 .ipynb_checkpoints/
