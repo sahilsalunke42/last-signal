@@ -50,6 +50,14 @@ console = Console()
 err_console = Console(stderr=True)
 
 
+ASCII_WORDMARK = r""" _                 _      ____  _                   _ 
+| |               | |_   / ___|(_) __ _ _ __   __ _| |
+| |    __ _  ___  | __|  \___ \| |/ _` | '_ \ / _` | |
+| |   / _` |/ __| | |_    ___) | | (_| | | | | (_| | |
+| |__| (_| |\__ \ | |_   |____/|_|\__, |_| |_|\__,_|_|
+|_____\__,_||___/  \__|           |___/               """
+
+
 def get_terminal_width(fallback: int = 80) -> int:
     """Determine safe terminal display width."""
     try:
@@ -60,94 +68,147 @@ def get_terminal_width(fallback: int = 80) -> int:
         return fallback
 
 
-def build_startup_interface(width: Optional[int] = None) -> str:
-    """Construct the Last Signal startup dashboard text.
+def build_startup_interface(width: Optional[int] = None, colorize: bool = False) -> str:
+    """Construct the Claude Code-style Last Signal welcome screen.
 
-    Formats branding, forensic description, untruncated commands,
-    offline explanation, and copyable examples, adapting safely to terminal width.
+    Renders an outlined forensic banner, custom 'Last Signal' ASCII wordmark,
+    haunting welcome copy, system status block, and command shortcuts
+    in Last Signal's Día de los Muertos / Digital Afterlife palette.
     """
     w = width or get_terminal_width()
-    inner_w = max(46, w - 4)
-    box_w = inner_w + 4
+    banner_title = "✳ LAST SIGNAL // FORENSIC TERMINAL"
+    banner_inner_w = 48
+    banner_w = banner_inner_w + 6  # 54 cols, matches ASCII wordmark width
 
-    top_border = "┌" + "─" * (box_w - 2) + "┐"
-    mid_border = "├" + "─" * (box_w - 2) + "┤"
-    bot_border = "└" + "─" * (box_w - 2) + "┘"
-    div_line = "─" * box_w
-    sub_sep = "─" * box_w
+    if w < 54:
+        banner_inner_w = max(34, w - 6)
+        banner_w = banner_inner_w + 6
 
-    def box_row(text: str = "") -> str:
-        truncated = text[:inner_w]
-        return f"│ {truncated.ljust(inner_w)} │"
+    banner_top = "┌" + "─" * (banner_w - 2) + "┐"
+    banner_bot = "└" + "─" * (banner_w - 2) + "┘"
 
-    lines = [
-        top_border,
-        box_row(""),
-        box_row(f"  LAST SIGNAL // FORENSIC INVESTIGATION CLI (v{__version__})"),
-        box_row('  "Ghost in the Machine" — Digital Afterlife Forensics'),
-        box_row(""),
-        box_row("  Every failed agent leaves a trace."),
-        box_row(""),
-        mid_border,
-        box_row("  MODE       LOCAL / OFFLINE (100% Zero-Cloud Telemetry)"),
-        box_row("  ANALYSIS   DETERMINISTIC RULES + OPTIONAL LOCAL AI (OLLAMA)"),
-        bot_border,
-        "",
-        "Last Signal investigates failed AI-agent executions. It reconstructs recorded",
-        "traces, detects failure patterns (repeated tool errors, unproductive retry",
-        "loops, and unhandled terminal crashes), and produces evidence-grounded",
-        "digital autopsy reports.",
-        "",
-        "REGISTERED COMMANDS:",
-        sub_sep,
-        "  run",
-        "    Syntax:      lastsignal run [OPTIONS] -- <COMMAND> [ARGS...]",
-        "    Description: Execute a command, capture trace, and auto-diagnose on failure.",
-        "    Example:     lastsignal run -- python examples/demo_agent.py",
-        "",
-        "  analyze",
-        "    Syntax:      lastsignal analyze <TRACE_FILE> [OPTIONS]",
-        "    Description: Ingest trace, detect failure patterns, and display autopsy.",
-        "    Example:     lastsignal analyze examples/repeated_tool_failure.jsonl",
-        "",
-        "  report",
-        "    Syntax:      lastsignal report <TRACE_FILE> --output <PATH> [OPTIONS]",
-        "    Description: Generate and export a Markdown autopsy report to destination file.",
-        "    Example:     lastsignal report examples/repeated_tool_failure.jsonl -o reports/autopsy.md",
-        "",
-        "  doctor",
-        "    Syntax:      lastsignal doctor [OPTIONS]",
-        "    Description: Verify local environment, report file write, and Ollama status.",
-        "    Example:     lastsignal doctor",
-        "",
-        "  help",
-        "    Syntax:      lastsignal help [COMMAND]",
-        "    Description: Show available commands and detailed usage reference.",
-        "    Example:     lastsignal help analyze",
-        "",
-        "OFFLINE & DETERMINISTIC ANALYSIS:",
-        sub_sep,
-        "  Last Signal is 100% offline-first. Deterministic failure detection and report",
-        "  export run without external network access or local LLM inference.",
-        "  To enforce purely deterministic analysis without contacting Ollama:",
-        "    lastsignal analyze <TRACE_FILE> --no-ai",
-        "",
-        "COMMON FLAGS & OPTIONS:",
-        sub_sep,
-        "  --no-ai               Run 100% offline deterministic rules (no LLM calls).",
-        "  --output, -o <PATH>   Export forensic autopsy report to a Markdown (.md) file.",
-        "  --model, -m <NAME>    Configure local Ollama model (default: llama3.2:latest).",
-        "  --ollama-url <URL>    Configure local Ollama daemon endpoint (default: http://localhost:11434).",
-        "  --no-color            Disable terminal ANSI color formatting.",
-        "",
-        "QUICK START:",
-        sub_sep,
-        "  1. Run diagnostics:        lastsignal doctor",
-        "  2. Run sample analysis:    lastsignal analyze examples/repeated_tool_failure.jsonl",
-        "  3. Force offline analysis: lastsignal analyze examples/repeated_tool_failure.jsonl --no-ai",
-        "  4. Export Markdown report: lastsignal report examples/repeated_tool_failure.jsonl -o reports/autopsy.md",
-        div_line,
-    ]
+    sep_w = max(54, min(w, 80))
+    sep_line = "─" * sep_w
+
+    trace_dir = Path(".lastsignal/traces")
+    traces_str = str(trace_dir) if trace_dir.exists() else ".lastsignal/traces (evidence repository)"
+
+    if colorize:
+        # Styled Rich markup version
+        pad_len = max(0, banner_inner_w - len(banner_title))
+        padding = " " * pad_len
+        banner_content = (
+            f"│  [bold {COLOR_MARIGOLD}]✳[/] [bold {COLOR_BONE}]LAST SIGNAL // FORENSIC TERMINAL[/]{padding}  │"
+        )
+
+        banner_block = [
+            f"[{COLOR_CRIMSON}]{banner_top}[/]",
+            banner_content,
+            f"[{COLOR_CRIMSON}]{banner_bot}[/]",
+        ]
+
+        logo_lines = [f"[bold {COLOR_CRIMSON}]{line}[/]" for line in ASCII_WORDMARK.splitlines()]
+
+        lines = [
+            "",
+            *banner_block,
+            "",
+            *logo_lines,
+            "",
+            f"[bold {COLOR_BONE}]Every failed agent leaves a trace.[/bold {COLOR_BONE}]",
+            f"[{COLOR_ASH}]Investigate execution failures. Preserve the evidence.[/{COLOR_ASH}]",
+            f'[dim {COLOR_ASH}]"Ghost in the Machine" — Offline-first digital autopsy CLI for AI agents.[/dim {COLOR_ASH}]',
+            f"[dim {COLOR_ASH}]Reconstructs recorded traces, detects failure patterns, and recovers terminal signals.[/dim {COLOR_ASH}]",
+            "",
+            f"[{COLOR_BORDER}]{sep_line}[/]",
+            f"[bold {COLOR_MARIGOLD}]SYSTEM STATUS: (DIGITAL AUTOPSY ENVIRONMENT)[/bold {COLOR_MARIGOLD}]",
+            f"  [{COLOR_ASH}]Version:[/]  [{COLOR_BONE}]v{__version__}[/] [dim {COLOR_ASH}](Deterministic Ground Truth Engine)[/dim {COLOR_ASH}]",
+            f"  [{COLOR_ASH}]Mode:[/]     [bold {COLOR_SPECTRAL_TEAL}]LOCAL / OFFLINE[/bold {COLOR_SPECTRAL_TEAL}] [dim {COLOR_ASH}](100% Air-Gapped / Zero-Cloud Telemetry)[/dim {COLOR_ASH}]",
+            f"  [{COLOR_ASH}]AI:[/]       [bold {COLOR_MARIGOLD}]OPTIONAL[/bold {COLOR_MARIGOLD}] [dim {COLOR_ASH}](Local Ollama: llama3.2:latest; pass --no-ai to silence)[/dim {COLOR_ASH}]",
+            f"  [{COLOR_ASH}]Traces:[/]   [{COLOR_BONE}]{traces_str}[/]",
+            f"[{COLOR_BORDER}]{sep_line}[/]",
+            "",
+            f"[bold {COLOR_MARIGOLD}]COMMAND SHORTCUTS:[/bold {COLOR_MARIGOLD}]",
+            f"  [bold {COLOR_BONE}]lastsignal run[/bold {COLOR_BONE}]       [{COLOR_ASH}]Capture and investigate an execution (live autopsy on fatal collapse)[/]",
+            f"                      [dim {COLOR_ASH}]Example: lastsignal run -- python examples/demo_agent.py[/]",
+            "",
+            f"  [bold {COLOR_BONE}]lastsignal analyze[/bold {COLOR_BONE}]   [{COLOR_ASH}]Analyze an existing trace for failure patterns and anomalies[/]",
+            f"                      [dim {COLOR_ASH}]Example: lastsignal analyze examples/repeated_tool_failure.jsonl[/]",
+            "",
+            f"  [bold {COLOR_BONE}]lastsignal doctor[/bold {COLOR_BONE}]    [{COLOR_ASH}]Check local dependencies and Ollama daemon connectivity[/]",
+            f"                      [dim {COLOR_ASH}]Example: lastsignal doctor[/]",
+            "",
+            f"  [bold {COLOR_BONE}]lastsignal report[/bold {COLOR_BONE}]    [{COLOR_ASH}]Export a forensic Markdown autopsy report[/]",
+            f"                      [dim {COLOR_ASH}]Example: lastsignal report <TRACE_FILE> --output <PATH>[/]",
+            "",
+            f"  [bold {COLOR_BONE}]lastsignal help[/bold {COLOR_BONE}]      [{COLOR_ASH}]View all commands and detailed documentation[/]",
+            f"                      [dim {COLOR_ASH}]Example: lastsignal help analyze[/]",
+            "",
+            f"[{COLOR_BORDER}]{sep_line}[/]",
+            f"[bold {COLOR_MARIGOLD}]OFFLINE & DETERMINISTIC ANALYSIS:[/bold {COLOR_MARIGOLD}]",
+            f"  [{COLOR_ASH}]Last Signal is 100% offline-first. Deterministic failure detection and report[/]",
+            f"  [{COLOR_ASH}]export run without external network access or local LLM inference.[/]",
+            f"  [{COLOR_ASH}]To enforce purely deterministic analysis without contacting Ollama:[/{COLOR_ASH}]",
+            f"    [bold {COLOR_BONE}]lastsignal analyze <TRACE_FILE> --no-ai[/bold {COLOR_BONE}]",
+            f"[{COLOR_BORDER}]{sep_line}[/]",
+            "",
+            f"[italic {COLOR_MARIGOLD}]Type a command to begin your investigation.[/italic {COLOR_MARIGOLD}]",
+            "",
+        ]
+    else:
+        # Plain text version for --no-color, NO_COLOR, non-TTY, and plain string assertion
+        pad_len = max(0, banner_inner_w - len(banner_title))
+        padding = " " * pad_len
+        banner_content = f"│  {banner_title}{padding}  │"
+        lines = [
+            "",
+            banner_top,
+            banner_content,
+            banner_bot,
+            "",
+            ASCII_WORDMARK,
+            "",
+            "Every failed agent leaves a trace.",
+            "Investigate execution failures. Preserve the evidence.",
+            '"Ghost in the Machine" — Offline-first digital autopsy CLI for AI agents.',
+            "Reconstructs recorded traces, detects failure patterns, and recovers terminal signals.",
+            "",
+            sep_line,
+            "SYSTEM STATUS: (DIGITAL AUTOPSY ENVIRONMENT)",
+            f"  Version:  v{__version__} (Deterministic Ground Truth Engine)",
+            "  Mode:     LOCAL / OFFLINE (100% Air-Gapped / Zero-Cloud Telemetry)",
+            "  AI:       OPTIONAL (Local Ollama: llama3.2:latest; pass --no-ai to silence)",
+            f"  Traces:   {traces_str}",
+            sep_line,
+            "",
+            "COMMAND SHORTCUTS:",
+            "  lastsignal run       Capture and investigate an execution (live autopsy on fatal collapse)",
+            "                      Example: lastsignal run -- python examples/demo_agent.py",
+            "",
+            "  lastsignal analyze   Analyze an existing trace for failure patterns and anomalies",
+            "                      Example: lastsignal analyze examples/repeated_tool_failure.jsonl",
+            "",
+            "  lastsignal doctor    Check local dependencies and Ollama daemon connectivity",
+            "                      Example: lastsignal doctor",
+            "",
+            "  lastsignal report    Export a forensic Markdown autopsy report",
+            "                      Example: lastsignal report <TRACE_FILE> --output <PATH>",
+            "",
+            "  lastsignal help      View all commands and detailed documentation",
+            "                      Example: lastsignal help analyze",
+            "",
+            sep_line,
+            "OFFLINE & DETERMINISTIC ANALYSIS:",
+            "  Last Signal is 100% offline-first. Deterministic failure detection and report",
+            "  export run without external network access or local LLM inference.",
+            "  To enforce purely deterministic analysis without contacting Ollama:",
+            "    lastsignal analyze <TRACE_FILE> --no-ai",
+            sep_line,
+            "",
+            "Type a command to begin your investigation.",
+            "",
+        ]
+
     return "\n".join(lines)
 
 
@@ -171,10 +232,11 @@ def main_callback(
         typer.echo(f"Last Signal v{__version__}")
         raise typer.Exit(code=0)
 
-    # When lastsignal is run with no arguments, launch startup interface
+    # When lastsignal is run with no arguments, launch welcome screen
     if ctx.invoked_subcommand is None:
-        startup_text = build_startup_interface()
-        if no_color or os.environ.get("NO_COLOR"):
+        is_no_color = bool(no_color or os.environ.get("NO_COLOR"))
+        startup_text = build_startup_interface(colorize=not is_no_color)
+        if is_no_color:
             typer.echo(startup_text)
         else:
             console.print(startup_text)

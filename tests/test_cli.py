@@ -7,15 +7,25 @@ runner = CliRunner()
 
 
 def test_cli_no_args_launches_startup_interface():
-    """Verify that running 'lastsignal' with no arguments displays the startup dashboard."""
+    """Verify that running 'lastsignal' with no arguments displays the Claude Code-style welcome screen."""
     result = runner.invoke(app, [])
     assert result.exit_code == 0
-    # Branding & Forensic description
-    assert "LAST SIGNAL // FORENSIC INVESTIGATION CLI" in result.output
+    # Banner and ASCII wordmark spelling 'Last Signal'
+    assert "LAST SIGNAL // FORENSIC TERMINAL" in result.output
+    assert "✳" in result.output
+    assert "/ __|" in result.output  # 's' in Last
+    assert "Every failed agent leaves a trace." in result.output
+    assert "Investigate execution failures. Preserve the evidence." in result.output
     assert "Ghost in the Machine" in result.output
-    assert "reconstructs recorded" in result.output
+    assert "recorded traces" in result.output
 
-    # Untruncated registered command names
+    # System Status area
+    assert "SYSTEM STATUS:" in result.output
+    assert "LOCAL / OFFLINE" in result.output
+    assert "Version:" in result.output
+    assert "Traces:" in result.output
+
+    # Untruncated registered command names & shortcuts
     assert "run" in result.output
     assert "analyze" in result.output
     assert "report" in result.output
@@ -24,10 +34,13 @@ def test_cli_no_args_launches_startup_interface():
 
     # Syntax and examples
     assert "lastsignal run" in result.output
-    assert "lastsignal analyze <TRACE_FILE>" in result.output
-    assert "lastsignal report <TRACE_FILE> --output" in result.output
+    assert "lastsignal analyze" in result.output
+    assert "lastsignal report" in result.output
     assert "lastsignal doctor" in result.output
     assert "lastsignal help" in result.output
+
+    # Subtle prompt instruction
+    assert "Type a command to begin your investigation." in result.output
 
     # Deterministic / offline explanation
     assert "--no-ai" in result.output
@@ -38,7 +51,7 @@ def test_cli_startup_respects_no_color():
     """Verify that '--no-color' flag renders plain text without ANSI escapes."""
     result = runner.invoke(app, ["--no-color"])
     assert result.exit_code == 0
-    assert "LAST SIGNAL // FORENSIC INVESTIGATION CLI" in result.output
+    assert "LAST SIGNAL // FORENSIC TERMINAL" in result.output
     assert "\x1B[" not in result.output
 
 
