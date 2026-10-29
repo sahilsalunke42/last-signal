@@ -50,12 +50,16 @@ console = Console()
 err_console = Console(stderr=True)
 
 
-ASCII_WORDMARK = r""" _                 _      ____  _                   _ 
-| |               | |_   / ___|(_) __ _ _ __   __ _| |
-| |    __ _  ___  | __|  \___ \| |/ _` | '_ \ / _` | |
-| |   / _` |/ __| | |_    ___) | | (_| | | | | (_| | |
-| |__| (_| |\__ \ | |_   |____/|_|\__, |_| |_|\__,_|_|
-|_____\__,_||___/  \__|           |___/               """
+ASCII_WORDMARK = (
+    r" _                 _      _____ _                   _ " + "\n"
+    r"| |               | |    / ____(_)                 | |" + "\n"
+    r"| |     __ _  ___ | |_  | (___  _  __ _ _ __   __ _| |" + "\n"
+    r"| |    / _` |/ __|| __|  \___ \| |/ _` | '_ \ / _` | |" + "\n"
+    r"| |___| (_| |\__ \| |_   ____) | | (_| | | | | (_| | |" + "\n"
+    r"|______\__,_||___/ \__| |_____/|_|\__, |_| |_|\__,_|_|" + "\n"
+    r"                                   __/ |              " + "\n"
+    r"                                  |___/               "
+)
 
 
 def get_terminal_width(fallback: int = 80) -> int:
@@ -68,12 +72,130 @@ def get_terminal_width(fallback: int = 80) -> int:
         return fallback
 
 
+def scan_workspace(root_dir: Optional[Path] = None) -> Dict[str, Any]:
+    """Auto-detect candidate agent entry points, recent traces, and failure state in workspace."""
+    root = Path(root_dir or Path.cwd()).resolve()
+
+    # 1. Detect candidate agent script
+    detected_agent = None
+    agent_candidates = [
+        "examples/demo_agent.py",
+        "demo_agent.py",
+        "agent.py",
+        "src/agent.py",
+        "main.py",
+        "app.py",
+        "run.py",
+        "bot.py",
+    ]
+    for rel in agent_candidates:
+        p = root / rel
+        if p.is_file():
+            detected_agent = rel
+            break
+
+    if not detected_agent:
+        try:
+            for p in sorted(root.glob("*.py"))[:10]:
+                if p.name.startswith("test_") or p.name in {"setup.py", "conftest.py"}:
+                    continue
+                content = p.read_text(encoding="utf-8", errors="ignore")[:1500].lower()
+                if any(k in content for k in ["agent", "tool_call", "langchain", "crewai", "autogen", "openai", "ollama", "anthropic"]):
+                    detected_agent = p.name
+                    break
+        except Exception:
+            pass
+
+    # 2. Detect recent traces in .lastsignal/traces or .lastsignal or traces/ or root
+    candidate_dirs = [
+        root / ".lastsignal" / "traces",
+        root / ".lastsignal",
+        root / "traces",
+        root / ".traces",
+    ]
+    trace_files: List[Path] = []
+    for d in candidate_dirs:
+        if d.is_dir():
+            trace_files.extend([p for p in d.glob("*.jsonl") if p.is_file()])
+
+    if not trace_files:
+        trace_files.extend([p for p in root.glob("*.jsonl") if p.is_file() and not p.name.startswith(".")])
+
+    unique_traces = list({p.resolve(): p for p in trace_files}.values())
+    unique_traces.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+
+    latest_trace = None
+    latest_trace_rel = None
+    latest_error_trace = None
+    latest_error_trace_rel = None
+    trace_status = None
+    trace_summary = None
+
+    if unique_traces:
+        latest_trace = unique_traces[0]
+        try:
+            latest_trace_rel = str(latest_trace.relative_to(root))
+        except ValueError:
+            latest_trace_rel = str(latest_trace)
+
+        # Inspect up to first 5 traces to identify failure status and locate latest error trace
+        for tr in unique_traces[:5]:
+            try:
+                read_res = read_trace(tr)
+                if not read_res.events:
+                    continue
+                analysis = detect_failures(read_res.events)
+                is_fail = analysis.has_failures or any(e.is_failure for e in read_res.events) or read_res.error_count > 0
+                if is_fail:
+                    if latest_error_trace is None:
+                        latest_error_trace = tr
+                        try:
+                            latest_error_trace_rel = str(tr.relative_to(root))
+                        except ValueError:
+                            latest_error_trace_rel = str(tr)
+
+                    if tr == latest_trace and trace_status is None:
+                        trace_status = "FAILED"
+                        tool_fails = [e for e in read_res.events if e.is_failure and e.event_type in {"tool_call", "tool_result"}]
+                        if tool_fails and tool_fails[-1].operation:
+                            trace_summary = f"{len(tool_fails)} tool failure(s) in '{tool_fails[-1].operation}'"
+                        elif analysis.findings:
+                            trace_summary = analysis.findings[0].title
+                        else:
+                            trace_summary = "Non-zero exit / aborted execution"
+                elif tr == latest_trace and trace_status is None:
+                    trace_status = "SUCCESS"
+                    trace_summary = f"{len(read_res.events)} event(s) completed cleanly"
+            except Exception:
+                if tr == latest_trace and trace_status is None:
+                    trace_status = "RECORDED"
+                    trace_summary = "Valid JSONL trace"
+
+    traces_dir = root / ".lastsignal" / "traces"
+    traces_display_dir = ".lastsignal/traces"
+    if traces_dir.exists():
+        traces_display_dir = ".lastsignal/traces"
+    elif (root / "traces").exists():
+        traces_display_dir = "traces"
+
+    return {
+        "detected_agent": detected_agent,
+        "latest_trace": latest_trace,
+        "latest_trace_rel": latest_trace_rel,
+        "latest_error_trace": latest_error_trace,
+        "latest_error_trace_rel": latest_error_trace_rel,
+        "trace_status": trace_status,
+        "trace_summary": trace_summary,
+        "traces_dir": traces_display_dir,
+    }
+
+
 def build_startup_interface(width: Optional[int] = None, colorize: bool = False) -> str:
     """Construct the Claude Code-style Last Signal welcome screen.
 
     Renders an outlined forensic banner, custom 'Last Signal' ASCII wordmark,
-    haunting welcome copy, system status block, and command shortcuts
-    in Last Signal's Día de los Muertos / Digital Afterlife palette.
+    haunting welcome copy, workspace auto-detection, status block, and command
+    shortcuts in Last Signal's Día de los Muertos / Digital Afterlife palette.
     """
     w = width or get_terminal_width()
     banner_title = "✳ LAST SIGNAL // FORENSIC TERMINAL"
@@ -90,11 +212,23 @@ def build_startup_interface(width: Optional[int] = None, colorize: bool = False)
     sep_w = max(54, min(w, 80))
     sep_line = "─" * sep_w
 
-    trace_dir = Path(".lastsignal/traces")
-    traces_str = str(trace_dir) if trace_dir.exists() else ".lastsignal/traces (evidence repository)"
+    ws = scan_workspace()
+    detected_agent_str = ws["detected_agent"] or "examples/demo_agent.py"
+
+    if ws["trace_status"] == "FAILED":
+        trace_status_badge = f"[bold {COLOR_CRIMSON}][⚠️ FAILED: {ws['trace_summary']}][/bold {COLOR_CRIMSON}]"
+        plain_status_badge = f"[⚠️ FAILED: {ws['trace_summary']}]"
+    elif ws["trace_status"] == "SUCCESS":
+        trace_status_badge = f"[bold {COLOR_SPECTRAL_TEAL}][✓ {ws['trace_summary']}][/bold {COLOR_SPECTRAL_TEAL}]"
+        plain_status_badge = f"[✓ {ws['trace_summary']}]"
+    elif ws["latest_trace_rel"]:
+        trace_status_badge = f"[{COLOR_ASH}][RECORDED: {ws['trace_summary'] or 'Valid JSONL trace'}][/{COLOR_ASH}]"
+        plain_status_badge = f"[RECORDED: {ws['trace_summary'] or 'Valid JSONL trace'}]"
+    else:
+        trace_status_badge = f"[dim {COLOR_ASH}][Awaiting first run][/dim {COLOR_ASH}]"
+        plain_status_badge = "[Awaiting first run]"
 
     if colorize:
-        # Styled Rich markup version
         pad_len = max(0, banner_inner_w - len(banner_title))
         padding = " " * pad_len
         banner_content = (
@@ -121,16 +255,21 @@ def build_startup_interface(width: Optional[int] = None, colorize: bool = False)
             f"[dim {COLOR_ASH}]Reconstructs recorded traces, detects failure patterns, and recovers terminal signals.[/dim {COLOR_ASH}]",
             "",
             f"[{COLOR_BORDER}]{sep_line}[/]",
+            f"[bold {COLOR_MARIGOLD}]WORKSPACE AUTO-DETECTION:[/bold {COLOR_MARIGOLD}]",
+            f"  [{COLOR_ASH}]Target Agent:[/]  [{COLOR_BONE}]{ws['detected_agent'] or 'None detected'}[/] [dim {COLOR_ASH}](auto-identified)[/dim {COLOR_ASH}]",
+            f"  [{COLOR_ASH}]Latest Trace:[/]  [{COLOR_BONE}]{ws['latest_trace_rel'] or 'None recorded'}[/]",
+            f"  [{COLOR_ASH}]Trace Status:[/]  {trace_status_badge}",
+            f"[{COLOR_BORDER}]{sep_line}[/]",
             f"[bold {COLOR_MARIGOLD}]SYSTEM STATUS: (DIGITAL AUTOPSY ENVIRONMENT)[/bold {COLOR_MARIGOLD}]",
             f"  [{COLOR_ASH}]Version:[/]  [{COLOR_BONE}]v{__version__}[/] [dim {COLOR_ASH}](Deterministic Ground Truth Engine)[/dim {COLOR_ASH}]",
             f"  [{COLOR_ASH}]Mode:[/]     [bold {COLOR_SPECTRAL_TEAL}]LOCAL / OFFLINE[/bold {COLOR_SPECTRAL_TEAL}] [dim {COLOR_ASH}](100% Air-Gapped / Zero-Cloud Telemetry)[/dim {COLOR_ASH}]",
             f"  [{COLOR_ASH}]AI:[/]       [bold {COLOR_MARIGOLD}]OPTIONAL[/bold {COLOR_MARIGOLD}] [dim {COLOR_ASH}](Local Ollama: llama3.2:latest; pass --no-ai to silence)[/dim {COLOR_ASH}]",
-            f"  [{COLOR_ASH}]Traces:[/]   [{COLOR_BONE}]{traces_str}[/]",
+            f"  [{COLOR_ASH}]Traces:[/]   [{COLOR_BONE}]{ws['traces_dir']}[/]",
             f"[{COLOR_BORDER}]{sep_line}[/]",
             "",
             f"[bold {COLOR_MARIGOLD}]COMMAND SHORTCUTS:[/bold {COLOR_MARIGOLD}]",
             f"  [bold {COLOR_BONE}]lastsignal run[/bold {COLOR_BONE}]       [{COLOR_ASH}]Capture and investigate an execution (live autopsy on fatal collapse)[/]",
-            f"                      [dim {COLOR_ASH}]Example: lastsignal run -- python examples/demo_agent.py[/]",
+            f"                      [dim {COLOR_ASH}]Example: lastsignal run -- python {detected_agent_str}[/]",
             "",
             f"  [bold {COLOR_BONE}]lastsignal analyze[/bold {COLOR_BONE}]   [{COLOR_ASH}]Analyze an existing trace for failure patterns and anomalies[/]",
             f"                      [dim {COLOR_ASH}]Example: lastsignal analyze examples/repeated_tool_failure.jsonl[/]",
@@ -156,7 +295,6 @@ def build_startup_interface(width: Optional[int] = None, colorize: bool = False)
             "",
         ]
     else:
-        # Plain text version for --no-color, NO_COLOR, non-TTY, and plain string assertion
         pad_len = max(0, banner_inner_w - len(banner_title))
         padding = " " * pad_len
         banner_content = f"│  {banner_title}{padding}  │"
@@ -174,16 +312,21 @@ def build_startup_interface(width: Optional[int] = None, colorize: bool = False)
             "Reconstructs recorded traces, detects failure patterns, and recovers terminal signals.",
             "",
             sep_line,
+            "WORKSPACE AUTO-DETECTION:",
+            f"  Target Agent:  {ws['detected_agent'] or 'None detected'}",
+            f"  Latest Trace:  {ws['latest_trace_rel'] or 'None recorded'}",
+            f"  Trace Status:  {plain_status_badge}",
+            sep_line,
             "SYSTEM STATUS: (DIGITAL AUTOPSY ENVIRONMENT)",
             f"  Version:  v{__version__} (Deterministic Ground Truth Engine)",
             "  Mode:     LOCAL / OFFLINE (100% Air-Gapped / Zero-Cloud Telemetry)",
             "  AI:       OPTIONAL (Local Ollama: llama3.2:latest; pass --no-ai to silence)",
-            f"  Traces:   {traces_str}",
+            f"  Traces:   {ws['traces_dir']}",
             sep_line,
             "",
             "COMMAND SHORTCUTS:",
             "  lastsignal run       Capture and investigate an execution (live autopsy on fatal collapse)",
-            "                      Example: lastsignal run -- python examples/demo_agent.py",
+            f"                      Example: lastsignal run -- python {detected_agent_str}",
             "",
             "  lastsignal analyze   Analyze an existing trace for failure patterns and anomalies",
             "                      Example: lastsignal analyze examples/repeated_tool_failure.jsonl",
@@ -208,6 +351,8 @@ def build_startup_interface(width: Optional[int] = None, colorize: bool = False)
             "Type a command to begin your investigation.",
             "",
         ]
+
+    return "\n".join(lines)
 
     return "\n".join(lines)
 
@@ -351,13 +496,9 @@ def run_command(
 
 @app.command(name="analyze")
 def analyze(
-    trace_path: Path = typer.Argument(
-        ...,
-        help="Path to JSONL execution trace file to analyze.",
-        exists=True,
-        file_okay=True,
-        dir_okay=False,
-        readable=True,
+    trace_path: Optional[Path] = typer.Argument(
+        None,
+        help="Path to JSONL execution trace file to analyze (auto-detects recent trace if omitted).",
     ),
     output: Optional[Path] = typer.Option(
         None,
@@ -388,10 +529,30 @@ def analyze(
     ),
 ):
     """Analyze an AI-agent trace file and print forensic findings."""
+    target_trace = trace_path
+    if target_trace is None:
+        ws = scan_workspace()
+        chosen_trace = ws.get("latest_error_trace") or ws.get("latest_trace")
+        chosen_rel = ws.get("latest_error_trace_rel") or ws.get("latest_trace_rel")
+        if chosen_trace:
+            target_trace = chosen_trace
+            if ws.get("latest_error_trace") and chosen_trace == ws.get("latest_error_trace"):
+                console.print(f"[bold {COLOR_CRIMSON}][*] Auto-detected failed execution trace:[/bold {COLOR_CRIMSON}] [{COLOR_BONE}]{chosen_rel or target_trace}[/{COLOR_BONE}]\n")
+            else:
+                console.print(f"[bold {COLOR_SPECTRAL_TEAL}][*] Auto-detected recent execution trace:[/bold {COLOR_SPECTRAL_TEAL}] [{COLOR_BONE}]{chosen_rel or target_trace}[/{COLOR_BONE}]\n")
+        else:
+            err_console.print(f"[bold {COLOR_CRIMSON}]Error:[/bold {COLOR_CRIMSON}] Missing argument 'TRACE_FILE' and no traces found in workspace.")
+            console.print("Usage: lastsignal analyze <TRACE_FILE>")
+            raise typer.Exit(code=2)
+
+    if not Path(target_trace).is_file():
+        err_console.print(f"[bold {COLOR_CRIMSON}]Error reading trace:[/bold {COLOR_CRIMSON}] File not found: '{target_trace}'")
+        raise typer.Exit(code=1)
+
     try:
-        read_res = read_trace(trace_path)
+        read_res = read_trace(target_trace)
     except TraceError as exc:
-        err_console.print(f"[bold red]Error reading trace:[/bold red] {exc}")
+        err_console.print(f"[bold {COLOR_CRIMSON}]Error reading trace:[/bold {COLOR_CRIMSON}] {exc}")
         raise typer.Exit(code=1)
 
     # 1. Deterministic failure detection (immutable ground truth)
@@ -408,8 +569,8 @@ def analyze(
     analysis.ai_diagnosis = ai_diag
 
     # 3. Format terminal report
-    terminal_report = format_terminal_report(read_res, analysis, str(trace_path))
-    if no_color:
+    terminal_report = format_terminal_report(read_res, analysis, str(target_trace))
+    if no_color or os.environ.get("NO_COLOR"):
         typer.echo(terminal_report)
     else:
         console.print(terminal_report)
@@ -417,7 +578,7 @@ def analyze(
     # 4. Optional Markdown export
     if output:
         try:
-            saved_path = export_markdown_report(read_res, analysis, str(trace_path), output)
+            saved_path = export_markdown_report(read_res, analysis, str(target_trace), output)
             console.print(f"\n[bold {COLOR_SPECTRAL_TEAL}][+] Markdown report exported to:[/bold {COLOR_SPECTRAL_TEAL}] [{COLOR_BONE}]{saved_path}[/{COLOR_BONE}]")
         except ReportExportError as exc:
             err_console.print(f"\n[bold {COLOR_CRIMSON}][!] Export failed:[/bold {COLOR_CRIMSON}] {exc}")
