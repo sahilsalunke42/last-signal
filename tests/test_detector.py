@@ -233,3 +233,42 @@ def test_analysis_report_and_finding_serialization():
     assert report_dict["finding_count"] == 1
     assert report_dict["high_count"] == 1
     assert report_dict["critical_count"] == 0
+
+
+def test_successful_setup_with_repeated_failures_not_counted_as_error():
+    """Verify that a successful setup event is preserved as evidence and not counted as a failure."""
+    events = [
+        TraceEvent(line_number=1, event_type="agent_start", status="started"),
+        TraceEvent(line_number=2, event_type="tool_call", operation="load_configuration", status="success"),
+        TraceEvent(line_number=3, event_type="tool_call", operation="vector_sync", attempt=1, status="started"),
+        TraceEvent(line_number=4, event_type="tool_result", operation="vector_sync", attempt=1, status="failed", error_message="Connection timeout"),
+        TraceEvent(line_number=5, event_type="retry", operation="vector_sync", attempt=2, status="pending"),
+        TraceEvent(line_number=6, event_type="tool_call", operation="vector_sync", attempt=2, status="started"),
+        TraceEvent(line_number=7, event_type="tool_result", operation="vector_sync", attempt=2, status="failed", error_message="Connection timeout"),
+        TraceEvent(line_number=8, event_type="retry", operation="vector_sync", attempt=3, status="pending"),
+        TraceEvent(line_number=9, event_type="tool_call", operation="vector_sync", attempt=3, status="started"),
+        TraceEvent(line_number=10, event_type="tool_result", operation="vector_sync", attempt=3, status="failed", error_message="Connection timeout"),
+        TraceEvent(line_number=11, event_type="agent_end", status="failed", error_message="Fatal abort"),
+    ]
+
+    report = detect_failures(events)
+
+    # 1. Unrecovered execution finding exists
+    unrec_findings = [f for f in report.findings if f.id == "RULE-UNRECOVERED-EXECUTION-FAILURE"]
+    assert len(unrec_findings) == 1
+    unrec = unrec_findings[0]
+
+    # 2. Line 2 (load_configuration, success) MUST NOT be in failure line numbers
+    assert 2 not in unrec.line_numbers
+
+    # 3. Only genuine failure lines [4, 7, 10] plus terminal event [11] should be in line_numbers
+    assert unrec.line_numbers == [4, 7, 10, 11]
+
+    # 4. Error event count in evidence must only count genuine failure events (3), not setup (line 2)
+    evidence_text = "\n".join(unrec.evidence)
+    assert "Encountered 3 error event(s) across line(s): [4, 7, 10]" in evidence_text
+    assert "Prior setup operation 'load_configuration' succeeded on Line 2" in evidence_text
+
+    # 5. Terminal event is properly interpreted
+    assert "Session ended in status 'failed'" in evidence_text
+    assert "No successful tool or model operation was recorded following the error on Line 10" in evidence_text
