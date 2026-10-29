@@ -342,46 +342,95 @@ class FailureDetector:
         agent_status: str,
     ) -> Optional[Finding]:
         """Detect sessions that encountered errors and terminated without recovery."""
-        # Find all failures
-        failures = [e for e in events if e.is_failure]
-        if not failures:
-            return None
-
-        # Find the last failure event
-        last_failure = failures[-1]
-
-        # Check if any tool/model succeeded AFTER the last failure
-        subsequent_successes = [
-            e
-            for e in events
-            if e.line_number > last_failure.line_number
-            and e.event_type in {"tool_call", "tool_result", "model_call"}
-            and (e.status and e.status.lower() == "success")
+        # Find genuine operational failures (exclude lifecycle events like agent_start and agent_end)
+        op_failures = [
+            e for e in events
+            if e.is_failure and e.event_type not in {"agent_start", "agent_end"}
         ]
 
-        # If a subsequent operation succeeded, the agent recovered!
-        if subsequent_successes:
+        has_terminal_failure = (
+            agent_status in {"failed", "fatal", "error", "terminated_abruptly"}
+            or (agent_end_event is not None and agent_end_event.is_failure)
+        )
+
+        if not op_failures and not has_terminal_failure:
             return None
+
+        # Check if any tool/model succeeded AFTER the last operational failure
+        if op_failures:
+            last_op_failure = op_failures[-1]
+            subsequent_successes = [
+                e
+                for e in events
+                if e.line_number > last_op_failure.line_number
+                and e.event_type in {"tool_call", "tool_result", "model_call"}
+                and (e.status and e.status.lower() in {"success", "completed", "ok"})
+                and not e.is_failure
+            ]
+            # If a subsequent operation succeeded, the agent recovered!
+            if subsequent_successes:
+                return None
 
         # Check if the execution ended in an unrecovered state
         is_unrecovered = (
-            agent_status in {"failed", "fatal", "error", "terminated_abruptly"}
-            or (agent_end_event is not None and agent_end_event.is_failure)
+            has_terminal_failure
             or (agent_end_event is None)  # ended abruptly
         )
 
         if not is_unrecovered:
             return None
 
-        failed_lines = sorted(list({f.line_number for f in failures}))
+        # Determine genuine error events and lines
+        if op_failures:
+            error_event_lines = [f.line_number for f in op_failures]
+            error_count = len(op_failures)
+            last_failure_line = op_failures[-1].line_number
+        elif agent_end_event:
+            error_event_lines = [agent_end_event.line_number]
+            error_count = 1
+            last_failure_line = agent_end_event.line_number
+        else:
+            error_event_lines = [events[-1].line_number] if events else []
+            error_count = len(error_event_lines)
+            last_failure_line = error_event_lines[-1] if error_event_lines else 1
+
+        # Finding line numbers: genuine failure lines plus the final agent_end resolution line
+        failed_lines = list(error_event_lines)
         if agent_end_event and agent_end_event.line_number not in failed_lines:
             failed_lines.append(agent_end_event.line_number)
+        failed_lines = sorted(list(set(failed_lines)))
 
+        # Build evidence
         evidence = [
             f"Session ended in status '{agent_status}'.",
-            f"Encountered {len(failures)} error event(s) across line(s): {[f.line_number for f in failures]}.",
-            f"No successful tool or model operation was recorded following the error on Line {last_failure.line_number}.",
         ]
+
+        # Preserve successful setup operations as evidence without classifying them as failures
+        first_fail_line = (
+            op_failures[0].line_number
+            if op_failures
+            else (agent_end_event.line_number if agent_end_event else float("inf"))
+        )
+        setup_successes = [
+            e
+            for e in events
+            if e.event_type in {"tool_call", "tool_result", "model_call"}
+            and (e.status and e.status.lower() in {"success", "completed", "ok"})
+            and e.line_number < first_fail_line
+            and not e.is_failure
+        ]
+        for s in setup_successes:
+            op_name = s.operation or "setup_operation"
+            evidence.append(
+                f"Prior setup operation '{op_name}' succeeded on Line {s.line_number}."
+            )
+
+        evidence.append(
+            f"Encountered {error_count} error event(s) across line(s): {error_event_lines}."
+        )
+        evidence.append(
+            f"No successful tool or model operation was recorded following the error on Line {last_failure_line}."
+        )
 
         explanation = (
             "The execution encountered errors and terminated without any subsequent successful recovery "
@@ -402,7 +451,7 @@ class FailureDetector:
             evidence=evidence,
             recommendation=recommendation,
             inferred=(agent_end_event is None),  # Inferred if session halted abruptly without agent_end
-            metadata={"status": agent_status, "total_failures": len(failures)},
+            metadata={"status": agent_status, "total_failures": error_count},
         )
 
     # -------------------------------------------------------------------------

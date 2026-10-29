@@ -220,6 +220,8 @@ def run_and_capture(
             pipe.close()
 
     # 2. Execute process securely (shell=False strictly enforced)
+    run_env = dict(os.environ)
+    run_env["PYTHONUNBUFFERED"] = "1"
     try:
         proc = subprocess.Popen(
             command,
@@ -228,6 +230,7 @@ def run_and_capture(
             text=True,
             bufsize=1,
             shell=False,
+            env=run_env,
         )
     except FileNotFoundError as exc:
         raise CommandNotFoundError(

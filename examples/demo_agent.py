@@ -15,38 +15,39 @@ import time
 
 
 def run_demo_agent(succeed: bool = False):
-    print("[INFO] Initializing Autonomous Research Agent (v1.2.0)...")
+    print("[INFO] Initializing Autonomous Research Agent (v1.2.0)...", flush=True)
     time.sleep(0.05)
 
     # Step 1: Initial tool call (configuration load)
-    print("[tool_call] tool=load_configuration status=success")
-    print("[INFO] Goal: Synchronize document embeddings with local vector store.")
+    print("[tool_call] tool=load_configuration status=success", flush=True)
+    print("[INFO] Goal: Synchronize document embeddings with local vector store.", flush=True)
     time.sleep(0.05)
 
     if succeed:
         # Successful path
-        print("[tool_call] tool=vector_sync attempt=1 status=started")
+        print("[tool_call] tool=vector_sync attempt=1 status=started", flush=True)
         time.sleep(0.05)
-        print("[tool_result] tool=vector_sync attempt=1 status=success")
-        print("[INFO] Successfully synchronized 256 document embeddings.")
-        print("[INFO] Agent goal completed.")
+        print("[tool_result] tool=vector_sync attempt=1 status=success", flush=True)
+        print("[INFO] Successfully synchronized 256 document embeddings.", flush=True)
+        print("[INFO] Agent goal completed.", flush=True)
         sys.exit(0)
 
     # Failing path: Tool attempts to connect to local vector store, times out, retries, and fails
     for attempt in range(1, 4):
-        print(f"[tool_call] tool=vector_sync attempt={attempt} status=started")
+        print(f"[tool_call] tool=vector_sync attempt={attempt} status=started", flush=True)
         time.sleep(0.05)
         print(
             f'[tool_result] tool=vector_sync attempt={attempt} status=failed '
-            f'error="TimeoutError: Connection to vector store at 127.0.0.1:6333 timed out after 5.0s"'
+            f'error="TimeoutError: Connection to vector store at 127.0.0.1:6333 timed out after 5.0s"',
+            flush=True,
         )
         if attempt < 3:
-            print(f"[retry] tool=vector_sync attempt={attempt + 1} status=pending")
+            print(f"[retry] tool=vector_sync attempt={attempt + 1} status=pending", flush=True)
             time.sleep(0.05)
 
     # Terminal abort
-    print("[ERROR] Exceeded retry threshold (3 attempts). Vector store unreachable.", file=sys.stderr)
-    print("RuntimeError: Fatal: Vector store sync failed after 3 retry attempts.", file=sys.stderr)
+    print("[ERROR] Exceeded retry threshold (3 attempts). Vector store unreachable.", file=sys.stderr, flush=True)
+    print("RuntimeError: Fatal: Vector store sync failed after 3 retry attempts.", file=sys.stderr, flush=True)
     sys.exit(1)
 
 

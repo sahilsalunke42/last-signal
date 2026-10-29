@@ -79,6 +79,10 @@ class TraceEvent:
     @property
     def is_failure(self) -> bool:
         """Indicates whether this event represents a failure or error."""
+        if self.status and self.status.lower() in {
+            "success", "completed", "ok", "started", "pending", "running"
+        }:
+            return False
         if self.status and self.status.lower() in {"failed", "error", "fatal", "timed_out"}:
             return True
         return bool(self.error_message)
