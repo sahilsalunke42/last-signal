@@ -266,7 +266,7 @@ def test_successful_setup_with_repeated_failures_not_counted_as_error():
 
     # 4. Error event count in evidence must only count genuine failure events (3), not setup (line 2)
     evidence_text = "\n".join(unrec.evidence)
-    assert "Encountered 3 error event(s) across line(s): [4, 7, 10]" in evidence_text
+    assert "Encountered 3 operational tool failure(s) across line(s): [4, 7, 10]" in evidence_text
     assert "Prior setup operation 'load_configuration' succeeded on Line 2" in evidence_text
 
     # 5. Terminal event is properly interpreted

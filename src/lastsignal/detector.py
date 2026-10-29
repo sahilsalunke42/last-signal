@@ -305,13 +305,30 @@ class FailureDetector:
             return None
 
         op = last_tool_event.operation or "unspecified_tool"
-        line_nums = sorted(list({last_tool_event.line_number, terminal_event.line_number}))
+        
+        # Check if there were intermediate process-level errors between last tool and terminal event
+        intermediate_proc_errors = [
+            e for e in events
+            if e.line_number > last_tool_event.line_number
+            and e.line_number < terminal_event.line_number
+            and e.event_type == "process_error"
+        ]
+        relevant_lines = {last_tool_event.line_number, terminal_event.line_number}
+        for pe in intermediate_proc_errors:
+            relevant_lines.add(pe.line_number)
+        line_nums = sorted(list(relevant_lines))
 
         evidence = [
             f"Line {last_tool_event.line_number}: Tool '{op}' failed with error: {last_tool_event.error_message or last_tool_event.status}",
-            f"Line {terminal_event.line_number}: Agent terminated with status '{terminal_event.status or 'failed'}'"
-            + (f" error: {terminal_event.error_message}" if terminal_event.error_message else ""),
         ]
+        for pe in intermediate_proc_errors:
+            evidence.append(
+                f"Line {pe.line_number}: Process-level fatal exception: {pe.error_message or 'Fatal exception'}"
+            )
+        evidence.append(
+            f"Line {terminal_event.line_number}: Agent terminated with status '{terminal_event.status or 'failed'}'"
+            + (f" error: {terminal_event.error_message}" if terminal_event.error_message else "")
+        )
 
         return Finding(
             id="RULE-TERMINAL-TOOL-FAILURE",
@@ -342,10 +359,14 @@ class FailureDetector:
         agent_status: str,
     ) -> Optional[Finding]:
         """Detect sessions that encountered errors and terminated without recovery."""
-        # Find genuine operational failures (exclude lifecycle events like agent_start and agent_end)
-        op_failures = [
+        # Distinguish genuine operational tool failures from process exceptions and lifecycle events
+        tool_failures = [
             e for e in events
-            if e.is_failure and e.event_type not in {"agent_start", "agent_end"}
+            if e.is_failure and e.event_type in {"tool_call", "tool_result", "model_call"}
+        ]
+        process_errors = [
+            e for e in events
+            if e.event_type == "process_error"
         ]
 
         has_terminal_failure = (
@@ -353,12 +374,12 @@ class FailureDetector:
             or (agent_end_event is not None and agent_end_event.is_failure)
         )
 
-        if not op_failures and not has_terminal_failure:
+        if not tool_failures and not process_errors and not has_terminal_failure:
             return None
 
-        # Check if any tool/model succeeded AFTER the last operational failure
-        if op_failures:
-            last_op_failure = op_failures[-1]
+        # Check if any tool/model operation succeeded AFTER the last operational tool failure
+        if tool_failures:
+            last_op_failure = tool_failures[-1]
             subsequent_successes = [
                 e
                 for e in events
@@ -380,22 +401,10 @@ class FailureDetector:
         if not is_unrecovered:
             return None
 
-        # Determine genuine error events and lines
-        if op_failures:
-            error_event_lines = [f.line_number for f in op_failures]
-            error_count = len(op_failures)
-            last_failure_line = op_failures[-1].line_number
-        elif agent_end_event:
-            error_event_lines = [agent_end_event.line_number]
-            error_count = 1
-            last_failure_line = agent_end_event.line_number
-        else:
-            error_event_lines = [events[-1].line_number] if events else []
-            error_count = len(error_event_lines)
-            last_failure_line = error_event_lines[-1] if error_event_lines else 1
-
-        # Finding line numbers: genuine failure lines plus the final agent_end resolution line
-        failed_lines = list(error_event_lines)
+        # Collect failure lines across tool failures and process errors
+        tool_lines = [f.line_number for f in tool_failures]
+        process_lines = [pe.line_number for pe in process_errors]
+        failed_lines = list(tool_lines) + list(process_lines)
         if agent_end_event and agent_end_event.line_number not in failed_lines:
             failed_lines.append(agent_end_event.line_number)
         failed_lines = sorted(list(set(failed_lines)))
@@ -407,9 +416,11 @@ class FailureDetector:
 
         # Preserve successful setup operations as evidence without classifying them as failures
         first_fail_line = (
-            op_failures[0].line_number
-            if op_failures
-            else (agent_end_event.line_number if agent_end_event else float("inf"))
+            tool_failures[0].line_number
+            if tool_failures
+            else (process_errors[0].line_number if process_errors else (
+                agent_end_event.line_number if agent_end_event else float("inf")
+            ))
         )
         setup_successes = [
             e
@@ -425,12 +436,23 @@ class FailureDetector:
                 f"Prior setup operation '{op_name}' succeeded on Line {s.line_number}."
             )
 
+        # Count genuine operational tool failures separately from process exceptions and lifecycle events
         evidence.append(
-            f"Encountered {error_count} error event(s) across line(s): {error_event_lines}."
+            f"Encountered {len(tool_failures)} operational tool failure(s) across line(s): {tool_lines}."
         )
-        evidence.append(
-            f"No successful tool or model operation was recorded following the error on Line {last_failure_line}."
-        )
+
+        if tool_failures:
+            evidence.append(
+                f"No successful tool or model operation was recorded following the error on Line {tool_failures[-1].line_number}."
+            )
+
+        # Clearly distinguish process-level fatal exception if present
+        if process_errors:
+            for pe in process_errors:
+                pe_msg = pe.error_message or "Fatal process error"
+                evidence.append(
+                    f"Process-level fatal exception on Line {pe.line_number}: {pe_msg}"
+                )
 
         explanation = (
             "The execution encountered errors and terminated without any subsequent successful recovery "
@@ -451,7 +473,11 @@ class FailureDetector:
             evidence=evidence,
             recommendation=recommendation,
             inferred=(agent_end_event is None),  # Inferred if session halted abruptly without agent_end
-            metadata={"status": agent_status, "total_failures": error_count},
+            metadata={
+                "status": agent_status,
+                "tool_failures": len(tool_failures),
+                "process_errors": len(process_errors),
+            },
         )
 
     # -------------------------------------------------------------------------

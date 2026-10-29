@@ -131,7 +131,7 @@ def parse_stream_line(
 
         return event_dict
 
-    # 3. Detect standard Python/system exception lines
+    # 3. Detect standard Python/system fatal exception lines (process-level errors)
     exc_match = _EXCEPTION_REGEX.search(stripped)
     if exc_match:
         exc_type = exc_match.group("exc")
@@ -139,10 +139,12 @@ def parse_stream_line(
         return {
             "timestamp": ts,
             "trace_id": trace_id,
-            "event_type": "tool_result",
-            "operation": exc_type,
-            "status": "failed",
+            "event_type": "process_error",
+            "status": "fatal",
             "error_message": f"{exc_type}: {exc_msg}" if exc_msg else exc_type,
+            "metadata": {
+                "exception_type": exc_type,
+            },
         }
 
     return None
@@ -276,7 +278,7 @@ def run_and_capture(
     end_ts = _iso_now()
     duration = time.perf_counter() - start_perf
 
-    # 4. Extract structured events from captured output streams in chronological order
+    # 4. Extract structured events from captured output streams
     all_captured_lines = unified_lines
     for idx, raw_line in enumerate(all_captured_lines, start=2):
         parsed = parse_stream_line(raw_line, line_number=idx, trace_id=trace_id)
@@ -284,7 +286,7 @@ def run_and_capture(
             events.append(parsed)
 
     # If the process exited with an error and no failures were detected in stream lines,
-    # capture the final stderr error or nonzero exit as an explicit tool/step failure event
+    # capture the final stderr error or nonzero exit as a process-level error event
     has_recorded_failures = any(
         e.get("status") in ("failed", "error", "fatal") or bool(e.get("error_message"))
         for e in events[1:]
@@ -296,9 +298,8 @@ def run_and_capture(
             {
                 "timestamp": end_ts,
                 "trace_id": trace_id,
-                "event_type": "tool_result",
-                "operation": Path(command[0]).stem or "process_step",
-                "status": "failed",
+                "event_type": "process_error",
+                "status": "fatal",
                 "error_message": summary_err,
             }
         )

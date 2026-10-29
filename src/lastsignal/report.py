@@ -124,6 +124,21 @@ def format_terminal_report(
         f"({read_result.valid_count} valid events, {read_result.error_count} malformed lines)"
     )
     lines.append(f"Execution Outcome:  {outcome}")
+    tool_failures = [
+        e for e in read_result.events
+        if e.is_failure and e.event_type in {"tool_call", "tool_result", "model_call"}
+    ]
+    process_errors = [
+        e for e in read_result.events
+        if e.event_type == "process_error"
+    ]
+    if tool_failures:
+        ops = sorted(list({sanitize_text(e.operation) for e in tool_failures if e.operation}))
+        ops_str = f" in '{', '.join(ops)}'" if ops else ""
+        lines.append(f"Tool Failures:      {len(tool_failures)} operational failure(s){ops_str}")
+    if process_errors:
+        pe_msg = process_errors[0].error_message or "Fatal process error"
+        lines.append(f"Process Exception:  {sanitize_text(pe_msg)}")
     lines.append(
         f"Findings Summary:   {analysis.finding_count} pattern(s) "
         f"({analysis.critical_count} critical, {analysis.high_count} high)"
@@ -244,6 +259,21 @@ def generate_markdown_report(
     md.append(f"| **Valid Events** | {read_result.valid_count} |")
     md.append(f"| **Malformed Lines** | {read_result.error_count} |")
     md.append(f"| **Execution Outcome** | **{sanitize_table_cell(outcome)}** |")
+    tool_failures = [
+        e for e in read_result.events
+        if e.is_failure and e.event_type in {"tool_call", "tool_result", "model_call"}
+    ]
+    process_errors = [
+        e for e in read_result.events
+        if e.event_type == "process_error"
+    ]
+    if tool_failures:
+        ops = sorted(list({sanitize_table_cell(e.operation) for e in tool_failures if e.operation}))
+        ops_str = f" in '{', '.join(ops)}'" if ops else ""
+        md.append(f"| **Tool Failures** | {len(tool_failures)} operational failure(s){ops_str} |")
+    if process_errors:
+        pe_msg = process_errors[0].error_message or "Fatal process error"
+        md.append(f"| **Process Exception** | `{sanitize_table_cell(pe_msg)}` |")
     md.append(
         f"| **Findings Detected** | {analysis.finding_count} "
         f"({analysis.critical_count} critical, {analysis.high_count} high) |"

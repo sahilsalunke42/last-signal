@@ -8,6 +8,7 @@ from typer.testing import CliRunner
 
 import pytest
 from lastsignal.cli import app
+from lastsignal.detector import detect_failures
 from lastsignal.runner import (
     CommandExecutionError,
     CommandNotFoundError,
@@ -15,6 +16,7 @@ from lastsignal.runner import (
     parse_stream_line,
     run_and_capture,
 )
+from lastsignal.trace_reader import read_trace
 
 runner = CliRunner()
 
@@ -78,9 +80,9 @@ def test_parse_stream_line_python_exceptions():
     line = "RuntimeError: Database connection pool exhausted after 30s"
     ev = parse_stream_line(line, 20, "tr-exc")
     assert ev is not None
-    assert ev["event_type"] == "tool_result"
-    assert ev["operation"] == "RuntimeError"
-    assert ev["status"] == "failed"
+    assert ev["event_type"] == "process_error"
+    assert ev.get("operation") is None
+    assert ev["status"] == "fatal"
     assert "RuntimeError: Database connection pool exhausted" in ev["error_message"]
 
 
@@ -291,3 +293,88 @@ def test_cli_run_demo_agent_e2e(tmp_path: Path):
     assert "Unproductive Retry Loop for 'vector_sync'" in res_fail.output
     assert fail_trace.exists()
     assert fail_report.exists()
+
+
+def test_demo_agent_failure_event_classification_and_counting(tmp_path: Path):
+    """Regression test: verify demo failure trace separates tool failures, fatal exceptions, and agent_end."""
+    demo_script = Path("examples/demo_agent.py").resolve()
+    trace_path = tmp_path / "failing_demo_trace.jsonl"
+    report_path = tmp_path / "failing_demo_report.md"
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--no-ai",
+            "--trace-out",
+            str(trace_path),
+            "--output",
+            str(report_path),
+            "--",
+            sys.executable,
+            str(demo_script),
+        ],
+    )
+    assert result.exit_code == 1
+
+    # 1. Inspect captured JSONL events directly
+    read_res = read_trace(trace_path)
+    events = read_res.events
+
+    # Has exactly 3 failed vector_sync tool results
+    vector_sync_fails = [
+        e for e in events
+        if e.event_type == "tool_result" and e.operation == "vector_sync" and e.is_failure
+    ]
+    assert len(vector_sync_fails) == 3
+
+    # Does not classify the fatal RuntimeError as a tool_result
+    runtime_error_tool_results = [
+        e for e in events
+        if e.event_type == "tool_result" and (e.operation == "RuntimeError" or "RuntimeError" in (e.operation or ""))
+    ]
+    assert len(runtime_error_tool_results) == 0
+
+    # The fatal exception is classified as a process_error
+    process_errors = [e for e in events if e.event_type == "process_error"]
+    assert len(process_errors) == 1
+    assert "RuntimeError" in (process_errors[0].error_message or "")
+
+    # Retains load_configuration as a successful setup event
+    setup_events = [
+        e for e in events
+        if e.operation == "load_configuration" and (e.status and e.status.lower() == "success")
+    ]
+    assert len(setup_events) == 1
+
+    # Preserves the final agent_end failure
+    agent_end_events = [e for e in events if e.event_type == "agent_end"]
+    assert len(agent_end_events) == 1
+    assert agent_end_events[0].status == "failed"
+
+    # 2. Check detector findings
+    report = detect_failures(events)
+
+    # Uses vector_sync rather than RuntimeError in the terminal tool-failure finding
+    term_finding = next((f for f in report.findings if f.id == "RULE-TERMINAL-TOOL-FAILURE"), None)
+    assert term_finding is not None
+    assert "vector_sync" in term_finding.title
+    assert "RuntimeError" not in term_finding.title
+
+    # Counts operational tool failures as 3, excluding lifecycle events and the fatal exception
+    unrec_finding = next((f for f in report.findings if f.id == "RULE-UNRECOVERED-EXECUTION-FAILURE"), None)
+    assert unrec_finding is not None
+    unrec_ev_str = "\n".join(unrec_finding.evidence)
+    assert "Encountered 3 operational tool failure(s)" in unrec_ev_str
+    assert "Process-level fatal exception" in unrec_ev_str
+    assert "Prior setup operation 'load_configuration' succeeded" in unrec_ev_str
+    assert setup_events[0].line_number not in unrec_finding.line_numbers
+
+    # 3. Check CLI output and Markdown report content
+    assert "Terminal Tool Failure in 'vector_sync'" in result.output
+    assert "Tool Failures:      3 operational failure(s) in 'vector_sync'" in result.output
+    assert "Process Exception:  RuntimeError" in result.output
+
+    report_content = report_path.read_text(encoding="utf-8")
+    assert "| **Tool Failures** | 3 operational failure(s) in 'vector_sync' |" in report_content
+    assert "Process-level fatal exception" in report_content

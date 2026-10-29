@@ -12,6 +12,7 @@ class EventType(str, Enum):
     TOOL_CALL = "tool_call"
     TOOL_RESULT = "tool_result"
     RETRY = "retry"
+    PROCESS_ERROR = "process_error"
     AGENT_END = "agent_end"
 
 
