@@ -118,3 +118,31 @@ def test_existing_commands_preserved():
     ana_res = runner.invoke(app, ["analyze", "examples/successful_execution.jsonl", "--no-ai"])
     assert ana_res.exit_code == 0
     assert "SUCCESSFUL" in ana_res.output
+
+
+def test_cli_analyze_auto_detects_recent_trace():
+    """Verify that 'lastsignal analyze' with no file argument auto-detects recent trace."""
+    res = runner.invoke(app, ["analyze", "--no-ai"])
+    assert res.exit_code in (0, 1)  # 1 because demo trace had failures
+    assert "Auto-detected" in res.output
+    assert ".jsonl" in res.output
+    assert "LAST SIGNAL // FORENSIC INVESTIGATION REPORT" in res.output
+
+
+def test_cli_report_auto_detects_recent_trace(tmp_path):
+    """Verify that 'lastsignal report' auto-detects trace and defaults destination."""
+    res = runner.invoke(app, ["report", "--no-ai"])
+    assert res.exit_code in (0, 1)
+    assert "Auto-detected" in res.output
+    assert "Auto-selected report destination" in res.output
+    assert "Forensic Markdown report written to" in res.output
+
+
+def test_scan_workspace_detects_agent_and_traces():
+    """Verify workspace scanner auto-identifies agent and traces."""
+    from lastsignal.cli import scan_workspace
+    ws = scan_workspace()
+    assert ws["detected_agent"] is not None
+    assert "demo_agent.py" in ws["detected_agent"]
+    assert ws["latest_trace"] is not None
+

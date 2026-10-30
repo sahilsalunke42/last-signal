@@ -234,12 +234,15 @@ lastsignal analyze examples/repeated_tool_failure.jsonl --model qwen2.5:latest -
 
 ## 10. Automated Tests
 
-Run the complete 42-test test suite:
+Run the complete 68-test test suite:
 ```bash
 pytest -v
 ```
 
 Tests cover:
+- Startup welcome screen layout, ASCII wordmark formatting, and narrow terminal adaptability
+- Process supervisor execution, live capture, exception interception, and trace emission (`lastsignal run`)
+- Workspace auto-detection for candidate agents and zero-argument trace analysis
 - Line-by-line JSONL streaming and malformed line reporting with exact line numbers
 - Legacy field alias resolution (`tool`, `error`, `event`)
 - Deterministic failure rules (repeated failures, retry loops, terminal aborts, recovery handling)

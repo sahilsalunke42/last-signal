@@ -106,12 +106,22 @@ def scan_workspace(root_dir: Optional[Path] = None) -> Dict[str, Any]:
         except Exception:
             pass
 
+    # If no local script found, detect installed autonomous CLI agents
+    if not detected_agent:
+        import shutil
+        for cli_tool in ["claude", "agy", "aider", "codex", "openhands"]:
+            if shutil.which(cli_tool):
+                detected_agent = f"{cli_tool} (CLI)"
+                break
+
     # 2. Detect recent traces in .lastsignal/traces or .lastsignal or traces/ or root
     candidate_dirs = [
         root / ".lastsignal" / "traces",
         root / ".lastsignal",
         root / "traces",
         root / ".traces",
+        root / ".claude",
+        root / ".openhands",
     ]
     trace_files: List[Path] = []
     for d in candidate_dirs:
@@ -214,6 +224,11 @@ def build_startup_interface(width: Optional[int] = None, colorize: bool = False)
 
     ws = scan_workspace()
     detected_agent_str = ws["detected_agent"] or "examples/demo_agent.py"
+    if detected_agent_str.endswith(" (CLI)"):
+        cli_name = detected_agent_str.split()[0]
+        run_example_str = f"lastsignal run -- {cli_name} '<task>'"
+    else:
+        run_example_str = f"lastsignal run -- python {detected_agent_str}"
 
     if ws["trace_status"] == "FAILED":
         trace_status_badge = f"[bold {COLOR_CRIMSON}][⚠️ FAILED: {ws['trace_summary']}][/bold {COLOR_CRIMSON}]"
@@ -269,7 +284,7 @@ def build_startup_interface(width: Optional[int] = None, colorize: bool = False)
             "",
             f"[bold {COLOR_MARIGOLD}]COMMAND SHORTCUTS:[/bold {COLOR_MARIGOLD}]",
             f"  [bold {COLOR_BONE}]lastsignal run[/bold {COLOR_BONE}]       [{COLOR_ASH}]Capture and investigate an execution (live autopsy on fatal collapse)[/]",
-            f"                      [dim {COLOR_ASH}]Example: lastsignal run -- python {detected_agent_str}[/]",
+            f"                      [dim {COLOR_ASH}]Example: {run_example_str}[/]",
             "",
             f"  [bold {COLOR_BONE}]lastsignal analyze[/bold {COLOR_BONE}]   [{COLOR_ASH}]Analyze an existing trace for failure patterns and anomalies[/]",
             f"                      [dim {COLOR_ASH}]Example: lastsignal analyze examples/repeated_tool_failure.jsonl[/]",
@@ -326,7 +341,7 @@ def build_startup_interface(width: Optional[int] = None, colorize: bool = False)
             "",
             "COMMAND SHORTCUTS:",
             "  lastsignal run       Capture and investigate an execution (live autopsy on fatal collapse)",
-            f"                      Example: lastsignal run -- python {detected_agent_str}",
+            f"                      Example: {run_example_str}",
             "",
             "  lastsignal analyze   Analyze an existing trace for failure patterns and anomalies",
             "                      Example: lastsignal analyze examples/repeated_tool_failure.jsonl",
@@ -351,8 +366,6 @@ def build_startup_interface(width: Optional[int] = None, colorize: bool = False)
             "Type a command to begin your investigation.",
             "",
         ]
-
-    return "\n".join(lines)
 
     return "\n".join(lines)
 
@@ -435,7 +448,12 @@ def run_command(
     """Execute an agent command, capture its trace, and auto-diagnose on failure."""
     target_cmd = list(command or []) + ctx.args
     if not target_cmd:
+        ws = scan_workspace()
+        detected = ws.get("detected_agent")
         err_console.print("[bold red]Error:[/bold red] No command provided to run.")
+        if detected:
+            console.print(f"[bold {COLOR_ASH}][*] Candidate agent detected in workspace:[/bold {COLOR_ASH}] [{COLOR_BONE}]{detected}[/{COLOR_BONE}]")
+            console.print(f"    Run with: [bold]lastsignal run -- python {detected}[/bold]\n")
         console.print("Usage:   lastsignal run [OPTIONS] -- <COMMAND> [ARGS...]")
         console.print("Example: lastsignal run -- python examples/demo_agent.py")
         raise typer.Exit(code=2)
@@ -591,19 +609,15 @@ def analyze(
 
 @app.command(name="report")
 def report(
-    trace_path: Path = typer.Argument(
-        ...,
-        help="Path to JSONL execution trace file.",
-        exists=True,
-        file_okay=True,
-        dir_okay=False,
-        readable=True,
+    trace_path: Optional[Path] = typer.Argument(
+        None,
+        help="Path to JSONL execution trace file (auto-detects recent trace if omitted).",
     ),
-    output: Path = typer.Option(
-        ...,
+    output: Optional[Path] = typer.Option(
+        None,
         "--output",
         "-o",
-        help="Destination path for Markdown autopsy report.",
+        help="Destination path for Markdown autopsy report (auto-defaults to reports/<trace>_autopsy.md).",
     ),
     no_ai: bool = typer.Option(
         False,
@@ -623,8 +637,36 @@ def report(
     ),
 ):
     """Generate and export a Markdown investigation report for a trace file."""
+    target_trace = trace_path
+    if target_trace is None:
+        ws = scan_workspace()
+        chosen_trace = ws.get("latest_error_trace") or ws.get("latest_trace")
+        chosen_rel = ws.get("latest_error_trace_rel") or ws.get("latest_trace_rel")
+        if chosen_trace:
+            target_trace = chosen_trace
+            if ws.get("latest_error_trace") and chosen_trace == ws.get("latest_error_trace"):
+                console.print(f"[bold {COLOR_CRIMSON}][*] Auto-detected failed execution trace:[/bold {COLOR_CRIMSON}] [{COLOR_BONE}]{chosen_rel or target_trace}[/{COLOR_BONE}]\n")
+            else:
+                console.print(f"[bold {COLOR_SPECTRAL_TEAL}][*] Auto-detected recent execution trace:[/bold {COLOR_SPECTRAL_TEAL}] [{COLOR_BONE}]{chosen_rel or target_trace}[/{COLOR_BONE}]\n")
+        else:
+            err_console.print(f"[bold {COLOR_CRIMSON}]Error:[/bold {COLOR_CRIMSON}] Missing argument 'TRACE_PATH' and no traces found in workspace.")
+            console.print("Usage: lastsignal report [TRACE_PATH] [--output <REPORT_PATH>]")
+            raise typer.Exit(code=2)
+
+    if not Path(target_trace).is_file():
+        err_console.print(f"[bold {COLOR_CRIMSON}]Error reading trace:[/bold {COLOR_CRIMSON}] File not found: '{target_trace}'")
+        raise typer.Exit(code=1)
+
+    target_output = output
+    if target_output is None:
+        reports_dir = Path("reports")
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        stem = Path(target_trace).stem
+        target_output = reports_dir / f"{stem}_autopsy.md"
+        console.print(f"[bold {COLOR_ASH}][*] Auto-selected report destination:[/bold {COLOR_ASH}] [{COLOR_BONE}]{target_output}[/{COLOR_BONE}]\n")
+
     try:
-        read_res = read_trace(trace_path)
+        read_res = read_trace(target_trace)
     except TraceError as exc:
         err_console.print(f"[bold {COLOR_CRIMSON}]Error reading trace:[/bold {COLOR_CRIMSON}] {exc}")
         raise typer.Exit(code=1)
@@ -642,7 +684,7 @@ def report(
     analysis.ai_diagnosis = ai_diag
 
     try:
-        saved_path = export_markdown_report(read_res, analysis, str(trace_path), output)
+        saved_path = export_markdown_report(read_res, analysis, str(target_trace), target_output)
         console.print(f"[bold {COLOR_SPECTRAL_TEAL}][+] Forensic Markdown report written to:[/bold {COLOR_SPECTRAL_TEAL}] [{COLOR_BONE}]{saved_path}[/{COLOR_BONE}]")
     except ReportExportError as exc:
         err_console.print(f"[bold {COLOR_CRIMSON}][!] Report export failed:[/bold {COLOR_CRIMSON}] {exc}")
@@ -725,56 +767,81 @@ def doctor(
 def show_help(
     command_name: Optional[str] = typer.Argument(
         None,
-        help="Specific command to get detailed help for (run, analyze, report, doctor).",
+        help="Specific command to get detailed help for (run, analyze, report, doctor, help).",
     )
 ):
     """Show available commands and their usage."""
+    w = get_terminal_width()
+    sep = "=" * w
+    sub_sep = "-" * w
+
     if command_name:
         cmd = command_name.lower().strip()
         if cmd == "run":
             console.print(f"[bold {COLOR_MARIGOLD}]COMMAND: lastsignal run[/bold {COLOR_MARIGOLD}]\n")
-            console.print("Execute an agent command, capture execution trace, and auto-diagnose on failure.\n")
+            console.print("Supervise any agent process, capture execution trace, and auto-diagnose on failure.\n")
             console.print(f"[bold {COLOR_BONE}]Usage:[/bold {COLOR_BONE}]")
             console.print("  lastsignal run [OPTIONS] -- <COMMAND> [ARGS...]\n")
+            console.print(f"[bold {COLOR_BONE}]Important:[/bold {COLOR_BONE}]")
+            console.print("  The '--' delimiter separates Last Signal flags from your target command.")
+            console.print("  Works with ANY executable: Python/Node scripts, CLI agents (claude, agy, aider), or test suites.\n")
             console.print(f"[bold {COLOR_BONE}]Options:[/bold {COLOR_BONE}]")
-            console.print("  --trace-out, -t <PATH> Destination path for saved JSONL trace")
+            console.print("  --trace-out, -t <PATH> Destination path for saved JSONL trace (default: .lastsignal/traces/)")
             console.print("  --output, -o <PATH>    Destination path for Markdown autopsy report if process fails")
             console.print("  --no-ai                Skip local LLM calls; run 100% offline deterministic rules")
             console.print("  --model, -m <NAME>     Local Ollama model name (default: llama3.2:latest)")
             console.print("  --ollama-url <URL>     Ollama endpoint (default: http://localhost:11434)")
             console.print("  --no-color             Disable terminal ANSI color formatting\n")
             console.print(f"[bold {COLOR_BONE}]Examples:[/bold {COLOR_BONE}]")
-            console.print("  lastsignal run -- python examples/demo_agent.py")
-            console.print("  lastsignal run --no-ai -- python examples/demo_agent.py")
-            console.print("  lastsignal run -t traces/custom.jsonl -o reports/fail.md -- node agent.js")
+            console.print("  # Supervise Python agent:")
+            console.print("  lastsignal run -- python examples/demo_agent.py\n")
+            console.print("  # Supervise autonomous CLI agents:")
+            console.print("  lastsignal run -- claude -p 'fix bug in auth.py'")
+            console.print("  lastsignal run -- agy 'run tests and fix failures'")
+            console.print("  lastsignal run -- aider --message 'add stripe billing'\n")
+            console.print("  # Enforce 100% offline deterministic autopsy and save Markdown report:")
+            console.print("  lastsignal run --no-ai -o reports/failure.md -- python agent.py")
             return
 
         elif cmd == "analyze":
             console.print(f"[bold {COLOR_MARIGOLD}]COMMAND: lastsignal analyze[/bold {COLOR_MARIGOLD}]\n")
-            console.print("Ingest a JSONL trace, detect failure patterns, and output forensic autopsy.\n")
+            console.print("Ingest an execution trace, detect failure patterns, and output forensic autopsy.\n")
             console.print(f"[bold {COLOR_BONE}]Usage:[/bold {COLOR_BONE}]")
-            console.print("  lastsignal analyze <TRACE_FILE> [OPTIONS]\n")
+            console.print("  lastsignal analyze [TRACE_FILE] [OPTIONS]\n")
+            console.print(f"[bold {COLOR_BONE}]Zero-Argument Auto-Detection:[/bold {COLOR_BONE}]")
+            console.print("  If [TRACE_FILE] is omitted, Last Signal automatically scans the workspace and")
+            console.print("  analyzes the most recent failed execution trace in .lastsignal/traces/!\n")
             console.print(f"[bold {COLOR_BONE}]Options:[/bold {COLOR_BONE}]")
-            console.print("  --output, -o <PATH>   Export forensic report to Markdown file")
+            console.print("  --output, -o <PATH>   Export forensic autopsy report to Markdown (.md) file")
             console.print("  --no-ai               Skip local LLM calls; run 100% offline deterministic rules")
             console.print("  --model, -m <NAME>    Local Ollama model name (default: llama3.2:latest)")
             console.print("  --ollama-url <URL>    Ollama endpoint (default: http://localhost:11434)")
             console.print("  --no-color            Disable terminal ANSI color formatting\n")
             console.print(f"[bold {COLOR_BONE}]Examples:[/bold {COLOR_BONE}]")
-            console.print("  lastsignal analyze examples/repeated_tool_failure.jsonl")
-            console.print("  lastsignal analyze examples/repeated_tool_failure.jsonl --no-ai")
-            console.print("  lastsignal analyze examples/repeated_tool_failure.jsonl -o reports/autopsy.md")
+            console.print("  lastsignal analyze                                        # Auto-inspects latest trace")
+            console.print("  lastsignal analyze --no-ai                                # Auto-inspects offline")
+            console.print("  lastsignal analyze examples/repeated_tool_failure.jsonl   # Inspects specific file")
+            console.print("  lastsignal analyze path/to/trace.jsonl -o report.md       # Exports Markdown autopsy")
             return
 
         elif cmd == "report":
             console.print(f"[bold {COLOR_MARIGOLD}]COMMAND: lastsignal report[/bold {COLOR_MARIGOLD}]\n")
-            console.print("Generate and export a Markdown investigation report for a trace file.\n")
+            console.print("Generate and export a forensic Markdown autopsy report for an agent trace.\n")
             console.print(f"[bold {COLOR_BONE}]Usage:[/bold {COLOR_BONE}]")
-            console.print("  lastsignal report <TRACE_FILE> --output <PATH> [OPTIONS]\n")
+            console.print("  lastsignal report [TRACE_FILE] [OPTIONS]\n")
+            console.print(f"[bold {COLOR_BONE}]Zero-Argument Auto-Detection:[/bold {COLOR_BONE}]")
+            console.print("  If [TRACE_FILE] is omitted, Last Signal automatically scans the workspace,")
+            console.print("  selects the most recent failed trace, and defaults output to reports/<trace>_autopsy.md!\n")
             console.print(f"[bold {COLOR_BONE}]Options:[/bold {COLOR_BONE}]")
-            console.print("  --output, -o <PATH>   (Required) Destination path for Markdown report")
+            console.print("  --output, -o <PATH>   Destination path for Markdown report (.md) (auto-selected if omitted)")
             console.print("  --no-ai               Skip local LLM calls in the exported report")
             console.print("  --model, -m <NAME>    Local Ollama model name (default: llama3.2:latest)")
+            console.print("  --ollama-url <URL>    Ollama endpoint (default: http://localhost:11434)\n")
+            console.print(f"[bold {COLOR_BONE}]Examples:[/bold {COLOR_BONE}]")
+            console.print("  lastsignal report                                         # Auto-exports latest trace")
+            console.print("  lastsignal report --output reports/autopsy.md             # Custom destination")
+            console.print("  lastsignal report examples/repeated_tool_failure.jsonl    # Specific trace file")
+            return
             console.print("  --ollama-url <URL>    Ollama endpoint (default: http://localhost:11434)\n")
             console.print(f"[bold {COLOR_BONE}]Example:[/bold {COLOR_BONE}]")
             console.print("  lastsignal report examples/repeated_tool_failure.jsonl -o reports/autopsy.md")
@@ -783,6 +850,10 @@ def show_help(
         elif cmd == "doctor":
             console.print(f"[bold {COLOR_MARIGOLD}]COMMAND: lastsignal doctor[/bold {COLOR_MARIGOLD}]\n")
             console.print("Verify local environment, report generation, and Ollama connectivity.\n")
+            console.print(f"[bold {COLOR_BONE}]Checks Performed:[/bold {COLOR_BONE}]")
+            console.print("  1. Python runtime and Last Signal engine integrity.")
+            console.print("  2. Local file system write permissions for traces and reports.")
+            console.print("  3. Local Ollama daemon status and diagnostic model availability.\n")
             console.print(f"[bold {COLOR_BONE}]Usage:[/bold {COLOR_BONE}]")
             console.print("  lastsignal doctor [OPTIONS]\n")
             console.print(f"[bold {COLOR_BONE}]Options:[/bold {COLOR_BONE}]")
@@ -795,11 +866,7 @@ def show_help(
         else:
             console.print(f"[bold {COLOR_MARIGOLD}]Unknown command '{command_name}'.[/bold {COLOR_MARIGOLD}] Available commands: run, analyze, report, doctor, help\n")
 
-    # General overview
-    w = get_terminal_width()
-    sep = "=" * w
-    sub_sep = "-" * w
-
+    # General complete reference overview
     lines = [
         sep,
         f"LAST SIGNAL // COMMAND REFERENCE (v{__version__})",
@@ -810,39 +877,52 @@ def show_help(
         sub_sep,
         "  run",
         "    Syntax:      lastsignal run [OPTIONS] -- <COMMAND> [ARGS...]",
-        "    Description: Execute a command, capture trace, and auto-diagnose on failure.",
+        "    Description: Supervise any agent process, capture trace, and auto-diagnose on failure.",
+        "    Supports:    Custom Python/Node scripts, CLI agents (claude, agy, aider), test suites.",
         "    Example:     lastsignal run -- python examples/demo_agent.py",
         "",
         "  analyze",
-        "    Syntax:      lastsignal analyze <TRACE_FILE> [OPTIONS]",
-        "    Description: Ingest trace, detect failure patterns, and display autopsy.",
+        "    Syntax:      lastsignal analyze [TRACE_FILE] [OPTIONS]",
+        "    Description: Ingest trace, detect failure patterns, and display forensic autopsy.",
+        "    Note:        Auto-detects and analyzes latest failed trace when TRACE_FILE is omitted!",
         "    Example:     lastsignal analyze examples/repeated_tool_failure.jsonl",
         "",
         "  report",
         "    Syntax:      lastsignal report <TRACE_FILE> --output <PATH> [OPTIONS]",
-        "    Description: Generate and export a Markdown autopsy report to destination file.",
+        "    Description: Generate and export an evidence-grounded Markdown autopsy report (.md).",
         "    Example:     lastsignal report examples/repeated_tool_failure.jsonl -o reports/autopsy.md",
         "",
         "  doctor",
         "    Syntax:      lastsignal doctor [OPTIONS]",
-        "    Description: Verify local environment, report file write, and Ollama status.",
+        "    Description: Verify local environment, report file write, and Ollama connectivity.",
         "    Example:     lastsignal doctor",
         "",
         "  help",
         "    Syntax:      lastsignal help [COMMAND]",
         "    Description: Show available commands and detailed usage reference.",
-        "    Example:     lastsignal help analyze",
+        "    Example:     lastsignal help run",
+        "",
+        "HOW AGENT SUPERVISION WORKS (-- DELIMITER):",
+        sub_sep,
+        "  Always use '--' before your target command to prevent argument collision:",
+        "    lastsignal run -- python agent.py",
+        "    lastsignal run -- claude -p 'refactor auth module'",
+        "    lastsignal run -- agy 'fix failing integration tests'",
+        "  Output streams live. If the agent succeeds (exit 0), trace is archived quietly.",
+        "  If the agent fails or crashes, Last Signal immediately displays the digital autopsy.",
         "",
         "OFFLINE & DETERMINISTIC ANALYSIS:",
         sub_sep,
         "  Last Signal runs 100% offline. To bypass all local LLM calls and enforce",
         "  purely deterministic rule-based analysis, pass --no-ai:",
         "    lastsignal analyze <TRACE_FILE> --no-ai",
+        "    lastsignal run --no-ai -- python agent.py",
         "",
         "COMMON FLAGS & OPTIONS:",
         sub_sep,
         "  --no-ai               Run 100% offline deterministic rules (no LLM calls).",
         "  --output, -o <PATH>   Export forensic autopsy report to a Markdown (.md) file.",
+        "  --trace-out, -t <PATH>Custom output path for captured JSONL trace.",
         "  --model, -m <NAME>    Configure local Ollama model (default: llama3.2:latest).",
         "  --ollama-url <URL>    Configure local Ollama daemon endpoint (default: http://localhost:11434).",
         "  --no-color            Disable terminal ANSI color formatting.",
